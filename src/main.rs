@@ -15,16 +15,73 @@ struct Rust {
     target: String,
     version: String,
     date: String,
+    components: Vec<String>,
 }
 
 impl Rust {
-    fn new(channel: String, target: String, version: String, date: String) -> Rust {
-        Rust {
+    fn new() -> io::Result<Rust> {
+        let re =
+            Regex::new(r"(stable|beta|nightly)-(\w.+?)\n").map_err(|e| io_err(&e.to_string()))?;
+        let command = Command::new("rustup")
+            .arg("show")
+            .arg("active-toolchain")
+            .output()
+            .expect("failed to execute process");
+        let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
+        let cap = re
+            .captures(&command_str)
+            .ok_or_else(|| io_err("regex not found channel or target"))?;
+        let (channel, target) = (cap[1].to_string(), cap[2].to_string());
+        let re = Regex::new(r"rustc\s(\d.+?\d)[\-\s].+?(\d{4}-\d{2}-\d{2})")
+            .map_err(|e| io_err(&e.to_string()))?;
+        let command = Command::new("rustc")
+            .arg("-V")
+            .output()
+            .expect("failed to execute process");
+        let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
+        let cap = re
+            .captures(&command_str)
+            .ok_or_else(|| io_err("regex not found version or date"))?;
+        let (version, date) = (cap[1].to_string(), cap[2].to_string());
+        let mut components = Vec::new();
+        let re = Regex::new(&(format!(r"\n(\w.*?)\-{}\s\(installed\)", target)))
+            .map_err(|e| io_err(&e.to_string()))?;
+        let command = Command::new("rustup")
+            .arg("component")
+            .arg("list")
+            .output()
+            .expect("failed to execute process");
+        let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
+        for cap in re.captures_iter(&command_str) {
+            components.push(cap[1].to_string());
+        }
+        Ok(Rust {
             channel,
             target,
             version,
             date,
-        }
+            components,
+        })
+    }
+
+    fn missing_components(&self, manifest: &Manifest) -> Vec<String> {
+        self.components
+            .iter()
+            .filter(|&c| {
+                let component = match manifest.renames.get(c) {
+                    Some(rename) => rename.to.clone(),
+                    None => c.to_string(),
+                };
+                match manifest.pkg.get(&component) {
+                    Some(package_target) => match package_target.target.get(&self.target) {
+                        Some(package_info) => !package_info.available,
+                        _ => true,
+                    },
+                    None => true,
+                }
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -85,48 +142,6 @@ fn get_body(path: String) -> io::Result<Manifest> {
     Ok(manifest)
 }
 
-fn get_rust_info() -> io::Result<Rust> {
-    let re = Regex::new(r"(stable|beta|nightly)-(\w.+?)\n").map_err(|e| io_err(&e.to_string()))?;
-    let command = Command::new("rustup")
-        .arg("show")
-        .arg("active-toolchain")
-        .output()
-        .expect("failed to execute process");
-    let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
-    let cap = re
-        .captures(&command_str)
-        .ok_or_else(|| io_err("regex not found channel or target"))?;
-    let (channel, target) = (cap[1].to_string(), cap[2].to_string());
-    let re = Regex::new(r"rustc\s(\d.+?\d)[\-\s].+?(\d{4}-\d{2}-\d{2})")
-        .map_err(|e| io_err(&e.to_string()))?;
-    let command = Command::new("rustc")
-        .arg("-V")
-        .output()
-        .expect("failed to execute process");
-    let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
-    let cap = re
-        .captures(&command_str)
-        .ok_or_else(|| io_err("regex not found version or date"))?;
-    let (version, date) = (cap[1].to_string(), cap[2].to_string());
-    Ok(Rust::new(channel, target, version, date))
-}
-
-fn get_components(target: &str) -> io::Result<Vec<String>> {
-    let mut components = Vec::new();
-    let re = Regex::new(&(format!(r"\n(\w.*?)\-{}\s\(installed\)", target)))
-        .map_err(|e| io_err(&e.to_string()))?;
-    let command = Command::new("rustup")
-        .arg("component")
-        .arg("list")
-        .output()
-        .expect("failed to execute process");
-    let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
-    for cap in re.captures_iter(&command_str) {
-        components.push(cap[1].to_string());
-    }
-    Ok(components)
-}
-
 fn print_vec(input: &[String], comma: &str) -> String {
     input
         .iter()
@@ -156,16 +171,15 @@ fn get_rust_date(input: Option<&PackageTargets>) -> io::Result<NaiveDate> {
 }
 
 fn get_date() -> io::Result<String> {
-    let rust = get_rust_info()?;
-    let components = get_components(&rust.target)?;
+    let rust = Rust::new()?;
     println!(
         "Installed: {}-{} {} ({})",
         rust.channel, rust.target, rust.version, rust.date
     );
-    match components.len() {
+    match rust.components.len() {
         0 => println!("With no components"),
-        1 => println!("With component: {}", components[0]),
-        _ => println!("With components: {}", print_vec(&components, ", ")),
+        1 => println!("With component: {}", rust.components[0]),
+        _ => println!("With components: {}", print_vec(&rust.components, ", ")),
     }
     let naive_date =
         NaiveDate::parse_from_str(&rust.date, "%Y-%m-%d").map_err(|e| io_err(&e.to_string()))?;
@@ -177,42 +191,26 @@ fn get_date() -> io::Result<String> {
             let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
             if let Ok(manifest) = get_body(path) {
                 let rust_date = get_rust_date(manifest.pkg.get("rust"))?;
-                let check: Vec<String> = components
-                    .iter()
-                    .filter(|&c| {
-                        let component = match manifest.renames.get(c) {
-                            Some(rename) => rename.to.clone(),
-                            None => c.to_string(),
-                        };
-                        match manifest.pkg.get(&component) {
-                            Some(package_target) => match package_target.target.get(&rust.target) {
-                                Some(package_info) => !package_info.available,
-                                _ => true,
-                            },
-                            None => true,
-                        }
-                    })
-                    .cloned()
-                    .collect();
-                if check.is_empty() && manifests == 0 && rust_date > naive_date {
+                let missing_components = &rust.missing_components(&manifest);
+                if missing_components.is_empty() && manifests == 0 && rust_date > naive_date {
                     return Ok(format!(
                         "Use: \"rustup update\" (new version from {})",
                         date_str
                     ));
-                } else if check.is_empty() && rust_date > naive_date {
+                } else if missing_components.is_empty() && rust_date > naive_date {
                     return Ok(format!(
                         "Use: \"rustup default {}-{}\"\n     \"rustup component add {}\"",
                         rust.channel,
                         date_str,
-                        print_vec(&components, " ")
+                        print_vec(&rust.components, " ")
                     ));
-                } else if check.is_empty() {
+                } else if missing_components.is_empty() {
                     return Ok("Updates not found".to_string());
                 }
                 println!(
                     "Build {} not have components: {}",
                     date_str,
-                    print_vec(&check, ", ")
+                    print_vec(&missing_components, ", ")
                 );
                 manifests += 1;
             }
