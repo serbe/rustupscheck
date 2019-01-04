@@ -65,10 +65,10 @@ fn get_body(path: String) -> io::Result<Manifest> {
     Ok(manifest)
 }
 
-fn get_target() -> io::Result<(String, String)> {
+fn get_toolchain() -> io::Result<(String, String, String, String)> {
     let re_target = Regex::new(r"Default host: (\w.+?)\n")
         .map_err(|e| Error::new(ErrorKind::InvalidInput, e.to_string()))?;
-    let re_date = Regex::new(r".*?rustc.+\(.+?(\d{4}-\d{2}-\d{2})\)")
+    let re = Regex::new(r".*?rustc\s(\d.+?)\-(\w+?)\s\(.+?(\d{4}-\d{2}-\d{2})\)")
         .map_err(|e| Error::new(ErrorKind::InvalidInput, e.to_string()))?;
     let command = Command::new("rustup")
         .arg("show")
@@ -78,11 +78,12 @@ fn get_target() -> io::Result<(String, String)> {
         .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
     let target = re_target
         .captures(&command_str)
-        .ok_or_else(|| Error::new(ErrorKind::NotFound, "regex not found target"))?;
-    let date = re_date
+        .ok_or_else(|| Error::new(ErrorKind::NotFound, "regex not found target"))?[1].to_string();
+    let cap = re
         .captures(&command_str)
         .ok_or_else(|| Error::new(ErrorKind::NotFound, "regex not found date"))?;
-    Ok((target[1].to_string(), date[1].to_string()))
+    let (channel, version, date) = (cap[2].to_string(), cap[1].to_string(), cap[3].to_string());
+    Ok((target, channel, version, date))
 }
 
 fn get_components(target: &str) -> io::Result<Vec<String>> {
@@ -103,9 +104,9 @@ fn get_components(target: &str) -> io::Result<Vec<String>> {
 }
 
 fn get_date() -> io::Result<String> {
-    let (target, date) = get_target()?;
+    let (target, channel, version, date) = get_toolchain()?;
     let components = get_components(&target)?;
-    println!("Target: {}, date {}", target, date);
+    println!("Installed: {}-{} {} ({})", channel, target, version, date);
     println!("Components: {:?}", components);
     let naive_date = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
@@ -114,10 +115,11 @@ fn get_date() -> io::Result<String> {
     for i in 0..31 {
         if let Some(new_time) = local_time.checked_sub_signed(Duration::days(i)) {
             let path = format!(
-                "/dist/{}-{}-{}/channel-rust-nightly.toml",
+                "/dist/{}-{}-{}/channel-rust-{}.toml",
                 new_time.year(),
                 new_time.month(),
-                new_time.day()
+                new_time.day(),
+                channel
             );
             if let Ok(manifest) = get_body(path) {
                 let check = components.iter().all(|c| {
@@ -138,7 +140,7 @@ fn get_date() -> io::Result<String> {
                 });
                 if check && manifests == 0 && new_time.naive_local() > naive_date {
                     return Ok(format!(
-                        "use: rustup update (date - {}-{}-{})",
+                        "Use: \"rustup update\" (new version from {}-{}-{})",
                         new_time.year(),
                         new_time.month(),
                         new_time.day()
@@ -163,7 +165,7 @@ fn get_date() -> io::Result<String> {
 
 fn main() {
     match get_date() {
-        Ok(text) => print!("{}", text),
-        Err(text) => print!("error: {}", text),
+        Ok(text) => println!("{}", text),
+        Err(text) => println!("error: {}", text),
     }
 }
