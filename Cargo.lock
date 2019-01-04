@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "rustupscheck"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "chrono 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "native-tls 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",

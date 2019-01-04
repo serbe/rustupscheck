@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate serde_derive;
 
-use chrono::{naive::NaiveDate, Datelike, Duration, Local};
+use chrono::{naive::NaiveDate, Duration, Local};
 use native_tls::TlsConnector;
 use regex::Regex;
 use std::collections::HashMap;
@@ -78,7 +78,8 @@ fn get_toolchain() -> io::Result<(String, String, String, String)> {
         .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
     let target = re_target
         .captures(&command_str)
-        .ok_or_else(|| Error::new(ErrorKind::NotFound, "regex not found target"))?[1].to_string();
+        .ok_or_else(|| Error::new(ErrorKind::NotFound, "regex not found target"))?[1]
+        .to_string();
     let cap = re
         .captures(&command_str)
         .ok_or_else(|| Error::new(ErrorKind::NotFound, "regex not found date"))?;
@@ -103,56 +104,66 @@ fn get_components(target: &str) -> io::Result<Vec<String>> {
     Ok(components)
 }
 
+fn print_vec(input: &[String]) -> String {
+    input
+        .iter()
+        .enumerate()
+        .fold(String::new(), |mut acc, (i, s)| {
+            if i > 0 {
+                acc.push_str(", ");
+            }
+            acc.push_str(&s);
+            acc
+        })
+}
+
 fn get_date() -> io::Result<String> {
     let (target, channel, version, date) = get_toolchain()?;
     let components = get_components(&target)?;
     println!("Installed: {}-{} {} ({})", channel, target, version, date);
-    println!("Components: {:?}", components);
+    println!("With components: {}", print_vec(&components));
     let naive_date = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
     let local_time = Local::today();
     let mut manifests = 0;
     for i in 0..31 {
         if let Some(new_time) = local_time.checked_sub_signed(Duration::days(i)) {
-            let path = format!(
-                "/dist/{}-{}-{}/channel-rust-{}.toml",
-                new_time.year(),
-                new_time.month(),
-                new_time.day(),
-                channel
-            );
+            let date_str = new_time.format("%Y-%m-%d").to_string();
+            let path = format!("/dist/{}/channel-rust-{}.toml", date_str, channel);
             if let Ok(manifest) = get_body(path) {
-                let check = components.iter().all(|c| {
-                    let component = if let Some(rename) = manifest.renames.get(c) {
-                        rename.to.clone()
-                    } else {
-                        c.to_string()
-                    };
-                    if let Some(package_target) = manifest.pkg.get(&component) {
-                        if let Some(package_info) = package_target.target.get(&target) {
-                            package_info.available
+                let check: Vec<String> = components
+                    .iter()
+                    .filter(|&c| {
+                        let component = if let Some(rename) = manifest.renames.get(c) {
+                            rename.to.clone()
                         } else {
-                            false
+                            c.to_string()
+                        };
+                        if let Some(package_target) = manifest.pkg.get(&component) {
+                            if let Some(package_info) = package_target.target.get(&target) {
+                                !package_info.available
+                            } else {
+                                true
+                            }
+                        } else {
+                            true
                         }
-                    } else {
-                        false
-                    }
-                });
-                if check && manifests == 0 && new_time.naive_local() > naive_date {
+                    })
+                    .cloned()
+                    .collect();
+                if check.is_empty() && manifests == 0 && new_time.naive_local() > naive_date {
                     return Ok(format!(
-                        "Use: \"rustup update\" (new version from {}-{}-{})",
-                        new_time.year(),
-                        new_time.month(),
-                        new_time.day()
+                        "Use: \"rustup update\" (new version from {})",
+                        date_str
                     ));
-                } else if check {
-                    return Ok(format!(
-                        "{}-{}-{} - last build with all components",
-                        new_time.year(),
-                        new_time.month(),
-                        new_time.day()
-                    ));
+                } else if check.is_empty() {
+                    return Ok(format!("Use: \"rustup default {}-{}\"", channel, date_str));
                 }
+                println!(
+                    "Build {} not have components: {}",
+                    date_str,
+                    print_vec(&check)
+                );
                 manifests += 1;
             }
         }
