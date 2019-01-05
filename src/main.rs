@@ -5,7 +5,7 @@ use chrono::{naive::NaiveDate, Duration, Local};
 use native_tls::TlsConnector;
 use regex::Regex;
 use std::collections::HashMap;
-use std::io::{self, Error, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::ops::Sub;
 use std::process::Command;
@@ -20,43 +20,36 @@ struct Rust {
 }
 
 impl Rust {
-    fn new() -> io::Result<Rust> {
-        let re =
-            Regex::new(r"(stable|beta|nightly)-(\w.+?)\n").map_err(|e| io_err(&e.to_string()))?;
+    fn new() -> Option<Rust> {
+        let re = Regex::new(r"(stable|beta|nightly)-(\w.+?)\n").ok()?;
         let command = Command::new("rustup")
             .arg("show")
             .arg("active-toolchain")
             .output()
             .expect("failed to execute process");
-        let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
-        let cap = re
-            .captures(&command_str)
-            .ok_or_else(|| io_err("regex not found channel or target"))?;
+        let command_str = String::from_utf8(command.stdout).ok()?;
+        let cap = re.captures(&command_str)?;
         let (channel, target) = (cap[1].to_string(), cap[2].to_string());
-        let re = Regex::new(r"rustc\s(\d.+?\d)[\-\s].+?(\d{4}-\d{2}-\d{2})")
-            .map_err(|e| io_err(&e.to_string()))?;
+        let re = Regex::new(r"rustc\s(\d.+?\d)[\-\s].+?(\d{4}-\d{2}-\d{2})").ok()?;
         let command = Command::new("rustc")
             .arg("-V")
             .output()
             .expect("failed to execute process");
-        let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
-        let cap = re
-            .captures(&command_str)
-            .ok_or_else(|| io_err("regex not found version or date"))?;
+        let command_str = String::from_utf8(command.stdout).ok()?;
+        let cap = re.captures(&command_str)?;
         let (version, date) = (cap[1].to_string(), cap[2].to_string());
         let mut components = Vec::new();
-        let re = Regex::new(&(format!(r"\n(\w.*?)\-{}\s\(installed\)", target)))
-            .map_err(|e| io_err(&e.to_string()))?;
+        let re = Regex::new(&(format!(r"\n(\w.*?)\-{}\s\(installed\)", target))).ok()?;
         let command = Command::new("rustup")
             .arg("component")
             .arg("list")
             .output()
             .expect("failed to execute process");
-        let command_str = String::from_utf8(command.stdout).map_err(|e| io_err(&e.to_string()))?;
+        let command_str = String::from_utf8(command.stdout).ok()?;
         for cap in re.captures_iter(&command_str) {
             components.push(cap[1].to_string());
         }
-        Ok(Rust {
+        Some(Rust {
             channel,
             target,
             version,
@@ -101,7 +94,7 @@ impl Rust {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Manifest {
     pub manifest_version: String,
@@ -110,13 +103,13 @@ pub struct Manifest {
     pub renames: HashMap<String, Rename>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Deserialize)]
 pub struct PackageTargets {
     pub version: String,
     pub target: HashMap<String, PackageInfo>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Deserialize)]
 pub struct PackageInfo {
     pub available: bool,
     pub url: Option<String>,
@@ -125,37 +118,31 @@ pub struct PackageInfo {
     pub xz_hash: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Deserialize)]
 pub struct Rename {
     pub to: String,
 }
 
-fn io_err(message: &str) -> Error {
-    Error::new(ErrorKind::Other, message)
-}
-
-fn get_manifest(path: String) -> io::Result<Manifest> {
+fn fetch_manifest(path: String) -> Option<Manifest> {
     let connector = TlsConnector::new().unwrap();
-    let stream = TcpStream::connect("static.rust-lang.org:443")?;
+    let stream = TcpStream::connect("static.rust-lang.org:443").ok()?;
     let mut stream = connector
-        .connect("static.rust-lang.org", stream)
-        .map_err(|e| io_err(&e.to_string()))?;
+        .connect("static.rust-lang.org", stream).ok()?;
     let request = format!(
         "GET {} HTTP/1.0\r\nHost: static.rust-lang.org\r\n\r\n",
         path
     )
     .into_bytes();
-    stream.write_all(&request)?;
+    stream.write_all(&request).ok()?;
     let mut response = vec![];
-    stream.read_to_end(&mut response)?;
+    stream.read_to_end(&mut response).ok()?;
     let pos = response
         .windows(4)
-        .position(|x| x == b"\r\n\r\n")
-        .ok_or_else(|| io_err("wrong http"))?;
+        .position(|x| x == b"\r\n\r\n")?;
     let body = &response[pos + 4..response.len()];
-    let body_str = String::from_utf8(body.to_vec()).map_err(|e| io_err(&e.to_string()))?;
-    let manifest = from_str(&body_str).map_err(|e| io_err(&e.to_string()))?;
-    Ok(manifest)
+    let body_str = String::from_utf8(body.to_vec()).ok()?;
+    let manifest = from_str(&body_str).ok()?;
+    Some(manifest)
 }
 
 fn print_vec(input: &[String], comma: &str) -> String {
@@ -171,52 +158,62 @@ fn print_vec(input: &[String], comma: &str) -> String {
         })
 }
 
-fn get_rust_date(input: Option<&PackageTargets>) -> io::Result<NaiveDate> {
+fn get_rust_date(input: Option<&PackageTargets>) -> Option<NaiveDate> {
     match input {
         Some(rust) => {
-            let re_date =
-                Regex::new(r".+?(\d{4}-\d{2}-\d{2})").map_err(|e| io_err(&e.to_string()))?;
-            let date = re_date
-                .captures(&rust.version)
-                .ok_or_else(|| io_err("regex not found date"))?[1]
-                .to_string();
-            NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|e| io_err(&e.to_string()))
+            let re_date = Regex::new(r".+?(\d{4}-\d{2}-\d{2})").ok()?;
+            let date = re_date.captures(&rust.version)?[1].to_string();
+            NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok()
         }
-        None => Err(Error::new(ErrorKind::Other, "no pkg rust")),
+        None => None,
     }
 }
 
-fn get_date() -> io::Result<String> {
+fn get_date() -> Option<String> {
     let rust = Rust::new()?;
     println!("{}", &rust.info());
     let naive_date =
-        NaiveDate::parse_from_str(&rust.date, "%Y-%m-%d").map_err(|e| io_err(&e.to_string()))?;
+        NaiveDate::parse_from_str(&rust.date, "%Y-%m-%d").ok()?;
     let local_time = Local::today();
-    let it = (0..31).into_iter().map(|i| {
-        let new_time = local_time.sub(Duration::days(i)).format("%Y-%m-%d").to_string();
-        new_time
-    });
+    // let it = (0..31).into_iter().map(|i| {
+    //     let new_time = local_time
+    //         .sub(Duration::days(i))
+    //         .format("%Y-%m-%d")
+    //         .to_string();
+    //     let path = format!("/dist/{}/channel-rust-{}.toml", new_time, rust.channel);
+    //     match fetch_manifest(path) {
+    //         Some(manifest) => {
+    //             let rust_date = get_rust_date(manifest.pkg.get("rust"))?;
+    //             let missing_components = &rust.missing_components(&manifest);
+    //             Some((rust_date, missing_components))
+    //         }
+    //         _ => None,
+    //     }
+    // });
     let mut manifests = 0;
     for i in 0..31 {
-        let date_str = local_time.sub(Duration::days(i)).format("%Y-%m-%d").to_string();
+        let date_str = local_time
+            .sub(Duration::days(i))
+            .format("%Y-%m-%d")
+            .to_string();
         let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
-        if let Ok(manifest) = get_manifest(path) {
+        if let Some(manifest) = fetch_manifest(path) {
             let rust_date = get_rust_date(manifest.pkg.get("rust"))?;
             let missing_components = &rust.missing_components(&manifest);
             if missing_components.is_empty() && manifests == 0 && rust_date > naive_date {
-                return Ok(format!(
+                return Some(format!(
                     "Use: \"rustup update\" (new version from {})",
                     date_str
                 ));
             } else if missing_components.is_empty() && rust_date > naive_date {
-                return Ok(format!(
+                return Some(format!(
                     "Use: \"rustup default {}-{}\"\n     \"rustup component add {}\"",
                     rust.channel,
                     date_str,
                     print_vec(&rust.components, " ")
                 ));
             } else if missing_components.is_empty() {
-                return Ok("Updates not found".to_string());
+                return Some("Updates not found".to_string());
             }
             println!(
                 "Build {} not have components: {}",
@@ -226,12 +223,12 @@ fn get_date() -> io::Result<String> {
             manifests += 1;
         }
     }
-    Err(io_err("no found version with all components"))
+    None
 }
 
 fn main() {
     match get_date() {
-        Ok(text) => println!("{}", text),
-        Err(text) => println!("error: {}", text),
+        Some(text) => println!("{}", text),
+        None => println!("error: no found version with all components"),
     }
 }
