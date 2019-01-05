@@ -11,6 +11,7 @@ use std::ops::Sub;
 use std::process::Command;
 use toml::from_str;
 
+#[derive(Debug, Clone)]
 struct Rust {
     channel: String,
     target: String,
@@ -94,40 +95,95 @@ impl Rust {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub struct Manifest {
-    pub manifest_version: String,
-    pub date: NaiveDate,
-    pub pkg: HashMap<String, PackageTargets>,
-    pub renames: HashMap<String, Rename>,
+struct Manifest {
+    manifest_version: String,
+    date: NaiveDate,
+    pkg: HashMap<String, PackageTargets>,
+    renames: HashMap<String, Rename>,
 }
 
-#[derive(Deserialize)]
-pub struct PackageTargets {
-    pub version: String,
-    pub target: HashMap<String, PackageInfo>,
+#[derive(Clone, Debug, Deserialize)]
+struct PackageTargets {
+    version: String,
+    target: HashMap<String, PackageInfo>,
 }
 
-#[derive(Deserialize)]
-pub struct PackageInfo {
-    pub available: bool,
-    pub url: Option<String>,
-    pub hash: Option<String>,
-    pub xz_url: Option<String>,
-    pub xz_hash: Option<String>,
+#[derive(Clone, Debug, Deserialize)]
+struct PackageInfo {
+    available: bool,
+    url: Option<String>,
+    hash: Option<String>,
+    xz_url: Option<String>,
+    xz_hash: Option<String>,
 }
 
-#[derive(Deserialize)]
-pub struct Rename {
-    pub to: String,
+#[derive(Clone, Debug, Deserialize)]
+struct Rename {
+    to: String,
+}
+
+struct Meta {
+    value: Value
+}
+
+impl Meta {
+    fn new() -> Meta {
+        Meta {
+            value: Value::new()
+        }
+    }
+}
+
+impl Iterator for Meta {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Value> {
+        self.value.offset += 1;
+
+        let date_str = self.value.date
+            .sub(Duration::days(self.value.offset))
+            .format("%Y-%m-%d")
+            .to_string();
+        let path = format!("/dist/{}/channel-rust-{}.toml", date_str, self.value.rust.channel);
+        self.value.manifest = fetch_manifest(path);
+        Some(self.value.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Value {
+    offset: i64,
+    rust: Rust,
+    date: NaiveDate,
+    manifest: Option<Manifest>,
+}
+
+impl Value {
+    fn new() -> Value {
+        let offset = 0;
+        let rust = Rust::new().unwrap();
+        let date = Local::today().naive_local();
+        let date_str = date
+            .sub(Duration::days(offset))
+            .format("%Y-%m-%d")
+            .to_string();
+        let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
+        let manifest = fetch_manifest(path);
+        Value {
+            offset,
+            rust,
+            date,
+            manifest,
+        }
+    }
 }
 
 fn fetch_manifest(path: String) -> Option<Manifest> {
     let connector = TlsConnector::new().unwrap();
     let stream = TcpStream::connect("static.rust-lang.org:443").ok()?;
-    let mut stream = connector
-        .connect("static.rust-lang.org", stream).ok()?;
+    let mut stream = connector.connect("static.rust-lang.org", stream).ok()?;
     let request = format!(
         "GET {} HTTP/1.0\r\nHost: static.rust-lang.org\r\n\r\n",
         path
@@ -136,9 +192,7 @@ fn fetch_manifest(path: String) -> Option<Manifest> {
     stream.write_all(&request).ok()?;
     let mut response = vec![];
     stream.read_to_end(&mut response).ok()?;
-    let pos = response
-        .windows(4)
-        .position(|x| x == b"\r\n\r\n")?;
+    let pos = response.windows(4).position(|x| x == b"\r\n\r\n")?;
     let body = &response[pos + 4..response.len()];
     let body_str = String::from_utf8(body.to_vec()).ok()?;
     let manifest = from_str(&body_str).ok()?;
@@ -172,8 +226,7 @@ fn get_rust_date(input: Option<&PackageTargets>) -> Option<NaiveDate> {
 fn get_date() -> Option<String> {
     let rust = Rust::new()?;
     println!("{}", &rust.info());
-    let naive_date =
-        NaiveDate::parse_from_str(&rust.date, "%Y-%m-%d").ok()?;
+    let naive_date = NaiveDate::parse_from_str(&rust.date, "%Y-%m-%d").ok()?;
     let local_time = Local::today();
     // let it = (0..31).into_iter().map(|i| {
     //     let new_time = local_time
@@ -227,8 +280,10 @@ fn get_date() -> Option<String> {
 }
 
 fn main() {
-    match get_date() {
-        Some(text) => println!("{}", text),
-        None => println!("error: no found version with all components"),
-    }
+    // match get_date() {
+    //     Some(text) => println!("{}", text),
+    //     None => println!("error: no found version with all components"),
+    // }
+    let meta = Meta::new();
+    println!("{:?}", meta.value)
 }
