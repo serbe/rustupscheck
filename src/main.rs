@@ -17,6 +17,7 @@ struct Rust {
     target: String,
     version: String,
     date: String,
+    naive_date: NaiveDate,
     components: Vec<String>,
 }
 
@@ -39,6 +40,7 @@ impl Rust {
         let command_str = String::from_utf8(command.stdout).ok()?;
         let cap = re.captures(&command_str)?;
         let (version, date) = (cap[1].to_string(), cap[2].to_string());
+        let naive_date = NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok()?;
         let mut components = Vec::new();
         let re = Regex::new(&(format!(r"\n(\w.*?)\-{}\s\(installed\)", target))).ok()?;
         let command = Command::new("rustup")
@@ -55,6 +57,7 @@ impl Rust {
             target,
             version,
             date,
+            naive_date,
             components,
         })
     }
@@ -125,13 +128,13 @@ struct Rename {
 }
 
 struct Meta {
-    value: Value
+    value: Value,
 }
 
 impl Meta {
     fn new() -> Meta {
         Meta {
-            value: Value::new()
+            value: Value::new(),
         }
     }
 }
@@ -142,13 +145,18 @@ impl Iterator for Meta {
     fn next(&mut self) -> Option<Value> {
         self.value.offset += 1;
 
-        let date_str = self.value.date
-            .sub(Duration::days(self.value.offset))
-            .format("%Y-%m-%d")
-            .to_string();
-        let path = format!("/dist/{}/channel-rust-{}.toml", date_str, self.value.rust.channel);
-        self.value.manifest = fetch_manifest(path);
-        Some(self.value.clone())
+        let offset_date = self.value.date.sub(Duration::days(self.value.offset));
+        if offset_date >= self.value.rust.naive_date {
+            let date_str = offset_date.format("%Y-%m-%d").to_string();
+            let path = format!(
+                "/dist/{}/channel-rust-{}.toml",
+                date_str, self.value.rust.channel
+            );
+            self.value.manifest = fetch_manifest(path);
+            Some(self.value.clone())
+        } else {
+            None
+        }
     }
 }
 
@@ -228,21 +236,6 @@ fn get_date() -> Option<String> {
     println!("{}", &rust.info());
     let naive_date = NaiveDate::parse_from_str(&rust.date, "%Y-%m-%d").ok()?;
     let local_time = Local::today();
-    // let it = (0..31).into_iter().map(|i| {
-    //     let new_time = local_time
-    //         .sub(Duration::days(i))
-    //         .format("%Y-%m-%d")
-    //         .to_string();
-    //     let path = format!("/dist/{}/channel-rust-{}.toml", new_time, rust.channel);
-    //     match fetch_manifest(path) {
-    //         Some(manifest) => {
-    //             let rust_date = get_rust_date(manifest.pkg.get("rust"))?;
-    //             let missing_components = &rust.missing_components(&manifest);
-    //             Some((rust_date, missing_components))
-    //         }
-    //         _ => None,
-    //     }
-    // });
     let mut manifests = 0;
     for i in 0..31 {
         let date_str = local_time
@@ -285,5 +278,14 @@ fn main() {
     //     None => println!("error: no found version with all components"),
     // }
     let meta = Meta::new();
-    println!("{:?}", meta.value)
+    let m = meta
+        .filter(|v| {
+            v.manifest.is_some()
+                && v.rust
+                    .missing_components(&v.manifest.clone().unwrap())
+                    .is_empty()
+        })
+        .nth(0)
+        .unwrap();
+    println!("{:?}", m.offset)
 }
