@@ -139,19 +139,14 @@ struct Value {
 
 impl Value {
     fn new() -> Value {
-        let offset = 0;
-        let days = 0;
         let rust = Rust::new().unwrap();
         let date = Local::today().naive_local();
-        let date_str = date
-            .sub(Duration::days(offset))
-            .format("%Y-%m-%d")
-            .to_string();
+        let date_str = date.sub(Duration::days(0)).format("%Y-%m-%d").to_string();
         let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
         let manifest = fetch_manifest(path);
         Value {
-            offset,
-            days,
+            offset: 0,
+            days: 0,
             date_str,
             rust,
             date,
@@ -201,7 +196,7 @@ impl Iterator for Meta {
 }
 
 fn fetch_manifest(path: String) -> Option<Manifest> {
-    let connector = TlsConnector::new().unwrap();
+    let connector = TlsConnector::new().ok()?;
     let stream = TcpStream::connect("static.rust-lang.org:443").ok()?;
     let mut stream = connector.connect("static.rust-lang.org", stream).ok()?;
     let request = format!(
@@ -245,12 +240,19 @@ fn main() {
         .nth(0);
     match value {
         Some(v) => match v.days {
-            0 => println!("Use: \"rustup update\" (new version from {})",
-                    v.date_str),
-            _ => println!("Use: \"rustup default {}-{}\"\n     \"rustup component add {}\"",
-                    v.rust.channel,
-                    v.date_str,
-                    print_vec(&v.rust.components, " "))
+            0 => println!("Use: \"rustup update\" (new version from {})", v.date_str),
+            _ => println!(
+                "Use: \"rustup default {}-{}\"{}",
+                v.rust.channel,
+                v.date_str,
+                match v.rust.components.len() {
+                    0 => String::new(),
+                    _ => format!(
+                        "\n     \"rustup component add {}\"",
+                        print_vec(&v.rust.components, " ")
+                    ),
+                }
+            ),
         },
         None => println!("error: no found version with all components"),
     }
