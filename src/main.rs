@@ -7,6 +7,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::io::{self, Error, ErrorKind, Read, Write};
 use std::net::TcpStream;
+use std::ops::Sub;
 use std::process::Command;
 use toml::from_str;
 
@@ -84,16 +85,19 @@ impl Rust {
             .collect()
     }
 
-    fn print_info(&self) {
-        println!(
-            "Installed: {}-{} {} ({})",
-            self.channel, self.target, self.version, self.date
-        );
-        match self.components.len() {
-            0 => println!("With no components"),
-            1 => println!("With component: {}", self.components[0]),
-            _ => println!("With components: {}", print_vec(&self.components, ", ")),
-        }
+    fn info(&self) -> String {
+        format!(
+            "Installed: {}-{} {} ({})\n{}",
+            self.channel,
+            self.target,
+            self.version,
+            self.date,
+            match self.components.len() {
+                0 => format!("With no components"),
+                1 => format!("With component: {}", self.components[0]),
+                _ => format!("With components: {}", print_vec(&self.components, ", ")),
+            }
+        )
     }
 }
 
@@ -184,40 +188,42 @@ fn get_rust_date(input: Option<&PackageTargets>) -> io::Result<NaiveDate> {
 
 fn get_date() -> io::Result<String> {
     let rust = Rust::new()?;
-    &rust.print_info();
+    println!("{}", &rust.info());
     let naive_date =
         NaiveDate::parse_from_str(&rust.date, "%Y-%m-%d").map_err(|e| io_err(&e.to_string()))?;
     let local_time = Local::today();
+    let it = (0..31).into_iter().map(|i| {
+        let new_time = local_time.sub(Duration::days(i)).format("%Y-%m-%d").to_string();
+        new_time
+    });
     let mut manifests = 0;
     for i in 0..31 {
-        if let Some(new_time) = local_time.checked_sub_signed(Duration::days(i)) {
-            let date_str = new_time.format("%Y-%m-%d").to_string();
-            let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
-            if let Ok(manifest) = get_manifest(path) {
-                let rust_date = get_rust_date(manifest.pkg.get("rust"))?;
-                let missing_components = &rust.missing_components(&manifest);
-                if missing_components.is_empty() && manifests == 0 && rust_date > naive_date {
-                    return Ok(format!(
-                        "Use: \"rustup update\" (new version from {})",
-                        date_str
-                    ));
-                } else if missing_components.is_empty() && rust_date > naive_date {
-                    return Ok(format!(
-                        "Use: \"rustup default {}-{}\"\n     \"rustup component add {}\"",
-                        rust.channel,
-                        date_str,
-                        print_vec(&rust.components, " ")
-                    ));
-                } else if missing_components.is_empty() {
-                    return Ok("Updates not found".to_string());
-                }
-                println!(
-                    "Build {} not have components: {}",
+        let date_str = local_time.sub(Duration::days(i)).format("%Y-%m-%d").to_string();
+        let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
+        if let Ok(manifest) = get_manifest(path) {
+            let rust_date = get_rust_date(manifest.pkg.get("rust"))?;
+            let missing_components = &rust.missing_components(&manifest);
+            if missing_components.is_empty() && manifests == 0 && rust_date > naive_date {
+                return Ok(format!(
+                    "Use: \"rustup update\" (new version from {})",
+                    date_str
+                ));
+            } else if missing_components.is_empty() && rust_date > naive_date {
+                return Ok(format!(
+                    "Use: \"rustup default {}-{}\"\n     \"rustup component add {}\"",
+                    rust.channel,
                     date_str,
-                    print_vec(&missing_components, ", ")
-                );
-                manifests += 1;
+                    print_vec(&rust.components, " ")
+                ));
+            } else if missing_components.is_empty() {
+                return Ok("Updates not found".to_string());
             }
+            println!(
+                "Build {} not have components: {}",
+                date_str,
+                print_vec(&missing_components, ", ")
+            );
+            manifests += 1;
         }
     }
     Err(io_err("no found version with all components"))
