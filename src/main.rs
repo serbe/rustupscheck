@@ -83,6 +83,18 @@ impl Rust {
             .cloned()
             .collect()
     }
+
+    fn print_info(&self) {
+        println!(
+            "Installed: {}-{} {} ({})",
+            self.channel, self.target, self.version, self.date
+        );
+        match self.components.len() {
+            0 => println!("With no components"),
+            1 => println!("With component: {}", self.components[0]),
+            _ => println!("With components: {}", print_vec(&self.components, ", ")),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -118,7 +130,7 @@ fn io_err(message: &str) -> Error {
     Error::new(ErrorKind::Other, message)
 }
 
-fn get_body(path: String) -> io::Result<Manifest> {
+fn get_manifest(path: String) -> io::Result<Manifest> {
     let connector = TlsConnector::new().unwrap();
     let stream = TcpStream::connect("static.rust-lang.org:443")?;
     let mut stream = connector
@@ -172,15 +184,7 @@ fn get_rust_date(input: Option<&PackageTargets>) -> io::Result<NaiveDate> {
 
 fn get_date() -> io::Result<String> {
     let rust = Rust::new()?;
-    println!(
-        "Installed: {}-{} {} ({})",
-        rust.channel, rust.target, rust.version, rust.date
-    );
-    match rust.components.len() {
-        0 => println!("With no components"),
-        1 => println!("With component: {}", rust.components[0]),
-        _ => println!("With components: {}", print_vec(&rust.components, ", ")),
-    }
+    &rust.print_info();
     let naive_date =
         NaiveDate::parse_from_str(&rust.date, "%Y-%m-%d").map_err(|e| io_err(&e.to_string()))?;
     let local_time = Local::today();
@@ -189,7 +193,7 @@ fn get_date() -> io::Result<String> {
         if let Some(new_time) = local_time.checked_sub_signed(Duration::days(i)) {
             let date_str = new_time.format("%Y-%m-%d").to_string();
             let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
-            if let Ok(manifest) = get_body(path) {
+            if let Ok(manifest) = get_manifest(path) {
                 let rust_date = get_rust_date(manifest.pkg.get("rust"))?;
                 let missing_components = &rust.missing_components(&manifest);
                 if missing_components.is_empty() && manifests == 0 && rust_date > naive_date {
