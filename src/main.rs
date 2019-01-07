@@ -1,44 +1,14 @@
 #[macro_use]
 extern crate serde_derive;
 
+mod manifest;
+
 use chrono::{naive::NaiveDate, Duration, Local};
-use native_tls::TlsConnector;
 use regex::Regex;
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::ops::Sub;
 use std::process::Command;
-use toml::from_str;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Manifest {
-    manifest_version: String,
-    date: NaiveDate,
-    pkg: HashMap<String, PackageTargets>,
-    renames: HashMap<String, Rename>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct PackageTargets {
-    version: String,
-    target: HashMap<String, PackageInfo>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct PackageInfo {
-    available: bool,
-    url: Option<String>,
-    hash: Option<String>,
-    xz_url: Option<String>,
-    xz_hash: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct Rename {
-    to: String,
-}
+use crate::manifest::{Manifest, fetch_manifest};
 
 #[derive(Debug, Clone)]
 struct Rust {
@@ -153,7 +123,7 @@ impl Value {
         let date = Local::today().naive_local();
         let date_str = date.sub(Duration::days(0)).format("%Y-%m-%d").to_string();
         let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
-        let manifest = fetch_manifest(path);
+        let manifest = fetch_manifest(&path);
         Value {
             offset: 0,
             days: 0,
@@ -194,7 +164,7 @@ impl Iterator for Meta {
                 "/dist/{}/channel-rust-{}.toml",
                 self.value.date_str, self.value.rust.channel
             );
-            self.value.manifest = fetch_manifest(path);
+            self.value.manifest = fetch_manifest(&path);
             if self.value.manifest.is_some() {
                 self.value.days += 1;
             }
@@ -203,29 +173,6 @@ impl Iterator for Meta {
             None
         }
     }
-}
-
-fn fetch_manifest(path: String) -> Option<Manifest> {
-    let connector = TlsConnector::new().ok()?;
-    let stream = TcpStream::connect("static.rust-lang.org:443").ok()?;
-    let mut stream = connector.connect("static.rust-lang.org", stream).ok()?;
-    let request = format!(
-        "GET {} HTTP/1.0\r\nHost: static.rust-lang.org\r\n\r\n",
-        path
-    )
-    .into_bytes();
-    stream.write_all(&request).ok()?;
-    let mut response = vec![];
-    stream.read_to_end(&mut response).ok()?;
-    let body = get_body(&response)?;
-    let manifest = from_str(&body).ok()?;
-    Some(manifest)
-}
-
-fn get_body(response: &[u8]) -> Option<String> {
-    let pos = response.windows(4).position(|x| x == b"\r\n\r\n")?;
-    let body = &response[pos + 4..response.len()];
-    String::from_utf8(body.to_vec()).ok()
 }
 
 fn print_vec(input: &[String], comma: &str) -> String {
