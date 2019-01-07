@@ -11,6 +11,35 @@ use std::ops::Sub;
 use std::process::Command;
 use toml::from_str;
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Manifest {
+    manifest_version: String,
+    date: NaiveDate,
+    pkg: HashMap<String, PackageTargets>,
+    renames: HashMap<String, Rename>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct PackageTargets {
+    version: String,
+    target: HashMap<String, PackageInfo>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct PackageInfo {
+    available: bool,
+    url: Option<String>,
+    hash: Option<String>,
+    xz_url: Option<String>,
+    xz_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct Rename {
+    to: String,
+}
+
 #[derive(Debug, Clone)]
 struct Rust {
     channel: String,
@@ -23,35 +52,24 @@ struct Rust {
 
 impl Rust {
     fn new() -> Option<Rust> {
-        let re = Regex::new(r"(stable|beta|nightly)-(\w.+?)\n").ok()?;
         let command = Command::new("rustup")
             .arg("show")
             .arg("active-toolchain")
             .output()
             .expect("failed to execute process");
-        let command_str = String::from_utf8(command.stdout).ok()?;
-        let cap = re.captures(&command_str)?;
-        let (channel, target) = (cap[1].to_string(), cap[2].to_string());
-        let re = Regex::new(r"rustc\s(\d.+?\d)[\-\s].+?(\d{4}-\d{2}-\d{2})").ok()?;
+        let (channel, target) = get_channel_target(&String::from_utf8(command.stdout).ok()?)?;
         let command = Command::new("rustc")
             .arg("-V")
             .output()
             .expect("failed to execute process");
-        let command_str = String::from_utf8(command.stdout).ok()?;
-        let cap = re.captures(&command_str)?;
-        let (version, date) = (cap[1].to_string(), cap[2].to_string());
+        let (version, date) = get_version_date(&String::from_utf8(command.stdout).ok()?)?;
         let naive_date = NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok()?;
-        let mut components = Vec::new();
-        let re = Regex::new(&(format!(r"\n(\w.*?)\-{}\s\(installed\)", target))).ok()?;
         let command = Command::new("rustup")
             .arg("component")
             .arg("list")
             .output()
             .expect("failed to execute process");
-        let command_str = String::from_utf8(command.stdout).ok()?;
-        for cap in re.captures_iter(&command_str) {
-            components.push(cap[1].to_string());
-        }
+        let components = get_components(&String::from_utf8(command.stdout).ok()?, &target)?;
         Some(Rust {
             channel,
             target,
@@ -98,33 +116,25 @@ impl Rust {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct Manifest {
-    manifest_version: String,
-    date: NaiveDate,
-    pkg: HashMap<String, PackageTargets>,
-    renames: HashMap<String, Rename>,
+fn get_channel_target(s: &str) -> Option<(String, String)> {
+    let re = Regex::new(r"(stable|beta|nightly)-(\w.+?)\n").ok()?;
+    let cap = re.captures(&s)?;
+    Some((cap[1].to_string(), cap[2].to_string()))
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct PackageTargets {
-    version: String,
-    target: HashMap<String, PackageInfo>,
+fn get_version_date(s: &str) -> Option<(String, String)> {
+    let re = Regex::new(r"rustc\s(\d.+?\d)[\-\s].+?(\d{4}-\d{2}-\d{2})").ok()?;
+    let cap = re.captures(&s)?;
+    Some((cap[1].to_string(), cap[2].to_string()))
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct PackageInfo {
-    available: bool,
-    url: Option<String>,
-    hash: Option<String>,
-    xz_url: Option<String>,
-    xz_hash: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct Rename {
-    to: String,
+fn get_components(s: &str, target: &str) -> Option<Vec<String>> {
+    let mut components = Vec::new();
+    let re = Regex::new(&(format!(r"\n(\w.*?)\-{}\s\(installed\)", target))).ok()?;
+    for cap in re.captures_iter(&s) {
+        components.push(cap[1].to_string());
+    }
+    Some(components)
 }
 
 #[derive(Debug, Clone)]
@@ -207,11 +217,15 @@ fn fetch_manifest(path: String) -> Option<Manifest> {
     stream.write_all(&request).ok()?;
     let mut response = vec![];
     stream.read_to_end(&mut response).ok()?;
+    let body = get_body(&response)?;
+    let manifest = from_str(&body).ok()?;
+    Some(manifest)
+}
+
+fn get_body(response: &[u8]) -> Option<String> {
     let pos = response.windows(4).position(|x| x == b"\r\n\r\n")?;
     let body = &response[pos + 4..response.len()];
-    let body_str = String::from_utf8(body.to_vec()).ok()?;
-    let manifest = from_str(&body_str).ok()?;
-    Some(manifest)
+    String::from_utf8(body.to_vec()).ok()
 }
 
 fn print_vec(input: &[String], comma: &str) -> String {
