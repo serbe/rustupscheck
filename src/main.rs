@@ -123,7 +123,7 @@ impl Value {
         let date = Local::today().naive_local();
         let date_str = date.sub(Duration::days(0)).format("%Y-%m-%d").to_string();
         let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
-        let manifest = fetch_manifest(&path);
+        let manifest = fetch_manifest(&path).ok();
         Value {
             offset: 0,
             days: 0,
@@ -164,7 +164,7 @@ impl Iterator for Meta {
                 "/dist/{}/channel-rust-{}.toml",
                 self.value.date_str, self.value.rust.channel
             );
-            self.value.manifest = fetch_manifest(&path);
+            self.value.manifest = fetch_manifest(&path).ok();
             if self.value.manifest.is_some() {
                 self.value.days += 1;
             }
