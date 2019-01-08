@@ -38,12 +38,15 @@ pub struct Rename {
 
 impl Manifest {
     pub fn get_rust_version(&self) -> Result<Version, String> {
-        let pkg_rust = self.pkg.get("rust").ok_or("Manifest not contain pkg rust")?;
+        let pkg_rust = self
+            .pkg
+            .get("rust")
+            .ok_or("Manifest not contain pkg rust")?;
         Version::from_str(&pkg_rust.version)
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Channel {
     Stable,
     Beta,
@@ -61,10 +64,10 @@ impl Channel {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Commit {
-    hash: String,
-    date: NaiveDate,
+    pub hash: String,
+    pub date: NaiveDate,
 }
 
 impl Commit {
@@ -76,16 +79,19 @@ impl Commit {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Version {
-    channel: Channel,
-    version: String,
-    commit: Commit,
+    pub channel: Channel,
+    pub version: String,
+    pub commit: Commit,
 }
 
 impl Version {
-    fn from_str(s: &str) -> Result<Self, String> {
-        let split: Vec<&str> = s.split_whitespace().map(|w| w.trim_matches(|c| c == '(' || c == ')')).collect();
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        let split: Vec<&str> = s
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c| c == '(' || c == ')'))
+            .collect();
         let (raw_version, hash, date) = (split[0], split[1], split[2]);
         let split: Vec<&str> = raw_version.split('-').collect();
         let (version, channel) = if split.len() == 2 {
@@ -114,7 +120,9 @@ where
 pub fn fetch_manifest(path: &str) -> Result<Manifest, String> {
     let connector = TlsConnector::new().map_err(|e| e.to_string())?;
     let stream = TcpStream::connect("static.rust-lang.org:443").map_err(|e| e.to_string())?;
-    let mut stream = connector.connect("static.rust-lang.org", stream).map_err(|e| e.to_string())?;
+    let mut stream = connector
+        .connect("static.rust-lang.org", stream)
+        .map_err(|e| e.to_string())?;
     let request = format!(
         "GET {} HTTP/1.0\r\nHost: static.rust-lang.org\r\n\r\n",
         path
@@ -122,14 +130,19 @@ pub fn fetch_manifest(path: &str) -> Result<Manifest, String> {
     .into_bytes();
     stream.write_all(&request).map_err(|e| e.to_string())?;
     let mut response = vec![];
-    stream.read_to_end(&mut response).map_err(|e| e.to_string())?;
+    stream
+        .read_to_end(&mut response)
+        .map_err(|e| e.to_string())?;
     let body = get_body(&response)?;
     let manifest = from_str(&body).map_err(|e| e.to_string())?;
     Ok(manifest)
 }
 
 fn get_body(response: &[u8]) -> Result<&str, String> {
-    let pos = response.windows(4).position(|x| x == b"\r\n\r\n").ok_or("Not search pattern")?;
+    let pos = response
+        .windows(4)
+        .position(|x| x == b"\r\n\r\n")
+        .ok_or("Not search pattern")?;
     let body = &response[pos + 4..response.len()];
     std::str::from_utf8(&body).map_err(|e| e.to_string())
 }
@@ -187,7 +200,10 @@ mod tests {
     #[test]
     fn parse_version() {
         let s = "1.33.0-nightly (9eac38634 2018-12-31)";
-        let split: Vec<&str> = s.split_whitespace().map(|w| w.trim_matches(|c| c == '(' || c == ')')).collect();
+        let split: Vec<&str> = s
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c| c == '(' || c == ')'))
+            .collect();
         assert_eq!(split.len(), 3);
         let (raw_version, hash, date) = (split[0], split[1], split[2]);
         assert_eq!(raw_version, "1.33.0-nightly");
@@ -211,5 +227,30 @@ mod tests {
         );
         let channel = Channel::from_str(&channel).unwrap();
         assert_eq!(channel, Channel::Nightly);
+    }
+
+    #[test]
+    fn parse_active_toolchain() {
+        let output = "nightly-x86_64-pc-windows-gnu\n";
+        let split: Vec<&str> = output.trim().splitn(2, '-').collect();
+        let channel = split[0];
+        let target = split[1];
+        assert_eq!(channel, "nightly");
+        assert_eq!(target, "x86_64-pc-windows-gnu");
+        let output = "rust-src (installed)\nrust-std-x86_64-unknown-redox\nrustc-x86_64-pc-windows-gnu (default)\nrustfmt-x86_64-pc-windows-gnu (installed)\n";
+        let split: Vec<&str> = output
+            .split('\n')
+            .filter(|&s| s.contains("(installed)"))
+            .collect();
+        assert!(split.len() == 2);
+        let components: Vec<String> = split
+            .iter()
+            .map(|s| {
+                s.replace(" (installed)", "")
+                    .replace(&format!("-{}", target), "")
+            })
+            .collect();
+        assert_eq!(&components[0], "rust-src");
+        assert_eq!(&components[1], "rustfmt");
     }
 }

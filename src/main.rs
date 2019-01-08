@@ -4,48 +4,28 @@ extern crate serde_derive;
 mod manifest;
 
 use chrono::{naive::NaiveDate, Duration, Local};
-use regex::Regex;
 use std::ops::Sub;
 use std::process::Command;
 
-use crate::manifest::{Manifest, fetch_manifest};
+use crate::manifest::{fetch_manifest, Manifest, Version};
 
 #[derive(Debug, Clone)]
 struct Rust {
     channel: String,
     target: String,
-    version: String,
-    date: String,
-    naive_date: NaiveDate,
+    version: Version,
     components: Vec<String>,
 }
 
 impl Rust {
-    fn new() -> Option<Rust> {
-        let command = Command::new("rustup")
-            .arg("show")
-            .arg("active-toolchain")
-            .output()
-            .expect("failed to execute process");
-        let (channel, target) = get_channel_target(&String::from_utf8(command.stdout).ok()?)?;
-        let command = Command::new("rustc")
-            .arg("-V")
-            .output()
-            .expect("failed to execute process");
-        let (version, date) = get_version_date(&String::from_utf8(command.stdout).ok()?)?;
-        let naive_date = NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok()?;
-        let command = Command::new("rustup")
-            .arg("component")
-            .arg("list")
-            .output()
-            .expect("failed to execute process");
-        let components = get_components(&String::from_utf8(command.stdout).ok()?, &target)?;
-        Some(Rust {
+    fn new() -> Result<Rust, String> {
+        let (channel, target) = get_channel_target()?;
+        let components = get_components(&target)?;
+        let version = get_version()?;
+        Ok(Rust {
             channel,
             target,
             version,
-            date,
-            naive_date,
             components,
         })
     }
@@ -75,8 +55,8 @@ impl Rust {
             "Installed: {}-{} {} ({})\n{}",
             self.channel,
             self.target,
-            self.version,
-            self.date,
+            self.version.version,
+            self.version.commit.date,
             match self.components.len() {
                 0 => "With no components".to_string(),
                 1 => format!("With component: {}", self.components[0]),
@@ -86,25 +66,48 @@ impl Rust {
     }
 }
 
-fn get_channel_target(s: &str) -> Option<(String, String)> {
-    let re = Regex::new(r"(stable|beta|nightly)-(\w.+?)\n").ok()?;
-    let cap = re.captures(&s)?;
-    Some((cap[1].to_string(), cap[2].to_string()))
+fn get_channel_target() -> Result<(String, String), String> {
+    let command = Command::new("rustup")
+        .arg("show")
+        .arg("active-toolchain")
+        .output()
+        .expect("failed to execute process");
+    let output = String::from_utf8(command.stdout).map_err(|e| e.to_string())?;
+    let split: Vec<&str> = output.trim().splitn(2, '-').collect();
+    let channel = split[0].to_string();
+    let target = split[1].to_string();
+    Ok((channel, target))
 }
 
-fn get_version_date(s: &str) -> Option<(String, String)> {
-    let re = Regex::new(r"rustc\s(\d.+?\d)[\-\s].+?(\d{4}-\d{2}-\d{2})").ok()?;
-    let cap = re.captures(&s)?;
-    Some((cap[1].to_string(), cap[2].to_string()))
+fn get_components(target: &str) -> Result<Vec<String>, String> {
+    let command = Command::new("rustup")
+        .arg("component")
+        .arg("list")
+        .output()
+        .expect("failed to execute process");
+    let output = String::from_utf8(command.stdout).map_err(|e| e.to_string())?;
+    let split: Vec<&str> = output
+        .split('\n')
+        .filter(|&s| s.contains("(installed)"))
+        .collect();
+    let components: Vec<String> = split
+        .iter()
+        .map(|s| {
+            s.replace(" (installed)", "")
+                .replace(&format!("-{}", target), "")
+        })
+        .collect();
+    Ok(components)
 }
 
-fn get_components(s: &str, target: &str) -> Option<Vec<String>> {
-    let mut components = Vec::new();
-    let re = Regex::new(&(format!(r"\n(\w.*?)\-{}\s\(installed\)", target))).ok()?;
-    for cap in re.captures_iter(&s) {
-        components.push(cap[1].to_string());
-    }
-    Some(components)
+fn get_version() -> Result<Version, String> {
+    let command = Command::new("rustc")
+        .arg("-V")
+        .output()
+        .expect("failed to execute process");
+    let output = String::from_utf8(command.stdout).map_err(|e| e.to_string())?;
+    let version = Version::from_str(&output)?;
+    Ok(version)
 }
 
 #[derive(Debug, Clone)]
@@ -158,7 +161,7 @@ impl Iterator for Meta {
         self.value.offset += 1;
 
         let offset_date = self.value.date.sub(Duration::days(self.value.offset));
-        if offset_date >= self.value.rust.naive_date {
+        if offset_date >= self.value.rust.version.commit.date {
             self.value.date_str = offset_date.format("%Y-%m-%d").to_string();
             let path = format!(
                 "/dist/{}/channel-rust-{}.toml",
