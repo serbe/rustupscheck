@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn wrong_path() {
-        let path = "https://static.rust-lang.org/dist/01-01-2019/channel-rust-nightly.toml";
+        let path = "/dist/01-01-2019/channel-rust-nightly.toml";
         let manifest = fetch_manifest(path);
         assert!(manifest.is_err());
         let path = "static.rust-lang.org";
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn new_year_manifest() {
-        let path = "https://static.rust-lang.org/dist/2019-01-01/channel-rust-nightly.toml";
+        let path = "/dist/2019-01-01/channel-rust-nightly.toml";
         let optional_manifest = fetch_manifest(path);
         assert!(optional_manifest.is_ok());
         let manifest = optional_manifest.unwrap();
@@ -195,11 +195,19 @@ mod tests {
             },
         };
         assert_eq!(manifest.get_rust_version(), Ok(rust1330));
+        let rust_src = manifest.pkg.get("rust-src").unwrap();
+        let target_info = rust_src.target.get("x86_64-pc-windows-gnu");
+        assert!(target_info.is_none());
+        let target_info = rust_src.target.get("*");
+        assert!(target_info.is_some());
+        let target_info = target_info.unwrap();
+        assert_eq!(target_info.available, true);
     }
 
     #[test]
     fn parse_version() {
-        let s = "1.33.0-nightly (9eac38634 2018-12-31)";
+        let s = "rustc 1.33.0-nightly (9eac38634 2018-12-31)";
+        let s = s.replace("rustc ", "");
         let split: Vec<&str> = s
             .split_whitespace()
             .map(|w| w.trim_matches(|c| c == '(' || c == ')'))
@@ -227,6 +235,8 @@ mod tests {
         );
         let channel = Channel::from_str(&channel).unwrap();
         assert_eq!(channel, Channel::Nightly);
+        let ver = Version::from_str(&s).unwrap();
+        assert_eq!(ver, Version{version: version.to_string(), channel, commit});
     }
 
     #[test]

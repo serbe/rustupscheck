@@ -41,7 +41,10 @@ impl Rust {
                 match manifest.pkg.get(&component) {
                     Some(package_target) => match package_target.target.get(&self.target) {
                         Some(package_info) => !package_info.available,
-                        _ => true,
+                        None => match package_target.target.get("*") {
+                            Some(package_info) => !package_info.available,
+                            None => true,
+                        },
                     },
                     None => true,
                 }
@@ -52,10 +55,11 @@ impl Rust {
 
     fn info(&self) -> String {
         format!(
-            "Installed: {}-{} {} ({})\n{}",
+            "Installed: {}-{} {} ({} {})\n{}",
             self.channel,
             self.target,
             self.version.version,
+            self.version.commit.hash,
             self.version.commit.date,
             match self.components.len() {
                 0 => "With no components".to_string(),
@@ -106,7 +110,7 @@ fn get_version() -> Result<Version, String> {
         .output()
         .expect("failed to execute process");
     let output = String::from_utf8(command.stdout).map_err(|e| e.to_string())?;
-    let version = Version::from_str(&output)?;
+    let version = Version::from_str(&output.replace("rustc ", ""))?;
     Ok(version)
 }
 
@@ -124,7 +128,7 @@ impl Value {
     fn new() -> Value {
         let rust = Rust::new().unwrap();
         let date = Local::today().naive_local();
-        let date_str = date.sub(Duration::days(0)).format("%Y-%m-%d").to_string();
+        let date_str = date.format("%Y-%m-%d").to_string();
         let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
         let manifest = fetch_manifest(&path).ok();
         Value {
@@ -160,9 +164,9 @@ impl Iterator for Meta {
     fn next(&mut self) -> Option<Value> {
         self.value.offset += 1;
 
-        let offset_date = self.value.date.sub(Duration::days(self.value.offset));
-        if offset_date >= self.value.rust.version.commit.date {
-            self.value.date_str = offset_date.format("%Y-%m-%d").to_string();
+        self.value.date = self.value.date.sub(Duration::days(self.value.offset));
+        if self.value.date >= self.value.rust.version.commit.date {
+            self.value.date_str = self.value.date.format("%Y-%m-%d").to_string();
             let path = format!(
                 "/dist/{}/channel-rust-{}.toml",
                 self.value.date_str, self.value.rust.channel
@@ -194,30 +198,35 @@ fn print_vec(input: &[String], comma: &str) -> String {
 fn main() {
     let meta = Meta::new();
     meta.print_info();
-    let value = meta
-        .filter(|v| {
-            v.manifest.is_some()
-                && v.rust
-                    .missing_components(&v.manifest.clone().unwrap())
-                    .is_empty()
-        })
-        .nth(0);
-    match value {
-        Some(v) => match v.days {
-            0 => println!("Use: \"rustup update\" (new version from {})", v.date_str),
-            _ => println!(
-                "Use: \"rustup default {}-{}\"{}",
-                v.rust.channel,
-                v.date_str,
-                match v.rust.components.len() {
-                    0 => String::new(),
-                    _ => format!(
-                        "\n     \"rustup component add {}\"",
-                        print_vec(&v.rust.components, " ")
-                    ),
-                }
-            ),
-        },
-        None => println!("error: no found version with all components"),
+    // let value = meta
+        // .filter(|v| {
+        //     v.manifest.is_some()
+        //         && v.rust
+        //             .missing_components(&v.manifest.clone().unwrap())
+        //             .is_empty()
+        // })
+        // ;
+    for v in meta {
+        println!("{} {:?}", v.date_str, v.rust.missing_components(&v.manifest.unwrap()));
     }
+    
+        // .nth(0);
+    // match value {
+    //     Some(v) => match v.days {
+    //         0 => println!("Use: \"rustup update\" (new version from {})", v.date_str),
+    //         _ => println!(
+    //             "Use: \"rustup default {}-{}\"{}",
+    //             v.rust.channel,
+    //             v.date_str,
+    //             match v.rust.components.len() {
+    //                 0 => String::new(),
+    //                 _ => format!(
+    //                     "\n     \"rustup component add {}\"",
+    //                     print_vec(&v.rust.components, " ")
+    //                 ),
+    //             }
+    //         ),
+    //     },
+    //     None => println!("error: no found version with all components"),
+    // }
 }
