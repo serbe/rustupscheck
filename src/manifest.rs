@@ -37,6 +37,11 @@ pub struct Rename {
 }
 
 impl Manifest {
+    pub fn from_date(date: &str, channel: &str) -> Option<Self> {
+        let path = format!("/dist/{}/channel-rust-{}.toml", date, channel);
+        fetch_manifest(&path).ok()
+    }
+
     pub fn get_pkg_for_target(&self, pkg: &str, target: &str) -> Option<PackageInfo> {
         match self.pkg.get(pkg) {
             Some(package_target) => match package_target.target.get(target) {
@@ -50,13 +55,13 @@ impl Manifest {
         }
     }
 
-    pub fn get_rust_version(&self) -> Result<Version, String> {
-        let pkg_rust = self
-            .pkg
-            .get("rust")
-            .ok_or("Manifest not contain pkg rust")?;
-        Version::from_str(&pkg_rust.version)
-    }
+    // pub fn get_rust_version(&self) -> Result<Version, String> {
+    //     let pkg_rust = self
+    //         .pkg
+    //         .get("rust")
+    //         .ok_or("Manifest not contain pkg rust")?;
+    //     Version::from_str(&pkg_rust.version)
+    // }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -199,15 +204,15 @@ mod tests {
             manifest.renames.get("rls").unwrap().to,
             "rls-preview".to_string()
         );
-        let rust1330 = Version {
-            channel: Channel::Nightly,
-            version: "1.33.0".to_string(),
-            commit: Commit {
-                hash: "9eac38634".to_string(),
-                date: NaiveDate::parse_from_str(&"2018-12-31", "%Y-%m-%d").unwrap(),
-            },
-        };
-        assert_eq!(manifest.get_rust_version(), Ok(rust1330));
+        // let rust1330 = Version {
+        //     channel: Channel::Nightly,
+        //     version: "1.33.0".to_string(),
+        //     commit: Commit {
+        //         hash: "9eac38634".to_string(),
+        //         date: NaiveDate::parse_from_str(&"2018-12-31", "%Y-%m-%d").unwrap(),
+        //     },
+        // };
+        // assert_eq!(manifest.get_rust_version(), Ok(rust1330));
         let rust_src = manifest.pkg.get("rust-src").unwrap();
         let target_info = rust_src.target.get("x86_64-pc-windows-gnu");
         assert!(target_info.is_none());
@@ -215,7 +220,13 @@ mod tests {
         assert!(target_info.is_some());
         let target_info = target_info.unwrap();
         assert_eq!(target_info.available, true);
-        assert_eq!(manifest.get_pkg_for_target("rust-src", "x86_64-pc-windows-gnu").unwrap().available, true)
+        assert_eq!(
+            manifest
+                .get_pkg_for_target("rust-src", "x86_64-pc-windows-gnu")
+                .unwrap()
+                .available,
+            true
+        )
     }
 
     #[test]
@@ -250,7 +261,14 @@ mod tests {
         let channel = Channel::from_str(&channel).unwrap();
         assert_eq!(channel, Channel::Nightly);
         let ver = Version::from_str(&s).unwrap();
-        assert_eq!(ver, Version{version: version.to_string(), channel, commit});
+        assert_eq!(
+            ver,
+            Version {
+                version: version.to_string(),
+                channel,
+                commit
+            }
+        );
     }
 
     #[test]

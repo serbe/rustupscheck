@@ -7,7 +7,7 @@ use chrono::{naive::NaiveDate, Duration, Local};
 use std::ops::Sub;
 use std::process::Command;
 
-use crate::manifest::{fetch_manifest, Manifest, Version};
+use crate::manifest::{Manifest, Version};
 
 #[derive(Debug, Clone)]
 struct Rust {
@@ -110,11 +110,11 @@ fn get_version() -> Result<Version, String> {
 
 #[derive(Debug, Clone)]
 struct Value {
-    // offset: i64,
+    offset: i64,
     days: i64,
     rust: Rust,
     date: NaiveDate,
-    date_str: String,
+    // date_str: String,
     manifest: Option<Manifest>,
 }
 
@@ -122,13 +122,11 @@ impl Value {
     fn new() -> Value {
         let rust = Rust::new().unwrap();
         let date = Local::today().naive_local();
-        let date_str = date.format("%Y-%m-%d").to_string();
-        let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
-        let manifest = fetch_manifest(&path).ok();
+        let manifest = Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &rust.channel);
         Value {
-            // offset: 0,
+            offset: 0,
             days: 0,
-            date_str,
+            // date_str,
             rust,
             date,
             manifest,
@@ -156,16 +154,11 @@ impl Iterator for Meta {
     type Item = Value;
 
     fn next(&mut self) -> Option<Value> {
-        // self.value.offset += 1;
+        self.value.offset += 1;
 
-        self.value.date = self.value.date.sub(Duration::days(1));
-        if self.value.date >= self.value.rust.version.commit.date {
-            self.value.date_str = self.value.date.format("%Y-%m-%d").to_string();
-            let path = format!(
-                "/dist/{}/channel-rust-{}.toml",
-                self.value.date_str, self.value.rust.channel
-            );
-            self.value.manifest = fetch_manifest(&path).ok();
+        let offset_date = self.value.date.sub(Duration::days(self.value.offset));
+        if offset_date >= self.value.rust.version.commit.date {
+            self.value.manifest = Manifest::from_date(&offset_date.format("%Y-%m-%d").to_string(), &self.value.rust.channel);
             if self.value.manifest.is_some() {
                 self.value.days += 1;
             }
@@ -203,7 +196,7 @@ fn main() {
     for v in meta {
         println!(
             "{} {:?}",
-            v.date_str,
+            v.date.sub(Duration::days(v.offset)).format("%Y-%m-%d").to_string(),
             missing_components(&v.rust, &v.manifest.unwrap())
         );
     }
