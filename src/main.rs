@@ -110,7 +110,7 @@ fn get_version() -> Result<Version, String> {
 
 #[derive(Debug, Clone)]
 struct Value {
-    offset: i64,
+    // offset: i64,
     days: i64,
     rust: Rust,
     date: NaiveDate,
@@ -126,7 +126,7 @@ impl Value {
         let path = format!("/dist/{}/channel-rust-{}.toml", date_str, rust.channel);
         let manifest = fetch_manifest(&path).ok();
         Value {
-            offset: 0,
+            // offset: 0,
             days: 0,
             date_str,
             rust,
@@ -156,9 +156,9 @@ impl Iterator for Meta {
     type Item = Value;
 
     fn next(&mut self) -> Option<Value> {
-        self.value.offset += 1;
+        // self.value.offset += 1;
 
-        self.value.date = self.value.date.sub(Duration::days(self.value.offset));
+        self.value.date = self.value.date.sub(Duration::days(1));
         if self.value.date >= self.value.rust.version.commit.date {
             self.value.date_str = self.value.date.format("%Y-%m-%d").to_string();
             let path = format!(
