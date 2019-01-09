@@ -37,6 +37,19 @@ pub struct Rename {
 }
 
 impl Manifest {
+    pub fn get_pkg_for_target(&self, pkg: &str, target: &str) -> Option<PackageInfo> {
+        match self.pkg.get(pkg) {
+            Some(package_target) => match package_target.target.get(target) {
+                Some(package_info) => Some(package_info.clone()),
+                None => match package_target.target.get("*") {
+                    Some(package_info) => Some(package_info.clone()),
+                    None => None,
+                },
+            },
+            None => None,
+        }
+    }
+
     pub fn get_rust_version(&self) -> Result<Version, String> {
         let pkg_rust = self
             .pkg
@@ -202,6 +215,7 @@ mod tests {
         assert!(target_info.is_some());
         let target_info = target_info.unwrap();
         assert_eq!(target_info.available, true);
+        assert_eq!(manifest.get_pkg_for_target("rust-src", "x86_64-pc-windows-gnu").unwrap().available, true)
     }
 
     #[test]

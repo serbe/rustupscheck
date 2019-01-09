@@ -30,29 +30,6 @@ impl Rust {
         })
     }
 
-    fn missing_components(&self, manifest: &Manifest) -> Vec<String> {
-        self.components
-            .iter()
-            .filter(|&c| {
-                let component = match manifest.renames.get(c) {
-                    Some(rename) => rename.to.clone(),
-                    None => c.to_string(),
-                };
-                match manifest.pkg.get(&component) {
-                    Some(package_target) => match package_target.target.get(&self.target) {
-                        Some(package_info) => !package_info.available,
-                        None => match package_target.target.get("*") {
-                            Some(package_info) => !package_info.available,
-                            None => true,
-                        },
-                    },
-                    None => true,
-                }
-            })
-            .cloned()
-            .collect()
-    }
-
     fn info(&self) -> String {
         format!(
             "Installed: {}-{} {} ({} {})\n{}",
@@ -68,6 +45,23 @@ impl Rust {
             }
         )
     }
+}
+
+fn missing_components(rust: &Rust, manifest: &Manifest) -> Vec<String> {
+    rust.components
+        .iter()
+        .filter(|&c| {
+            let component = match manifest.renames.get(c) {
+                Some(rename) => rename.to.clone(),
+                None => c.to_string(),
+            };
+            match manifest.get_pkg_for_target(&component, &rust.target) {
+                Some(package_info) => !package_info.available,
+                None => true,
+            }
+        })
+        .cloned()
+        .collect()
 }
 
 fn get_channel_target() -> Result<(String, String), String> {
@@ -199,18 +193,22 @@ fn main() {
     let meta = Meta::new();
     meta.print_info();
     // let value = meta
-        // .filter(|v| {
-        //     v.manifest.is_some()
-        //         && v.rust
-        //             .missing_components(&v.manifest.clone().unwrap())
-        //             .is_empty()
-        // })
-        // ;
+    // .filter(|v| {
+    //     v.manifest.is_some()
+    //         && v.rust
+    //             .missing_components(&v.manifest.clone().unwrap())
+    //             .is_empty()
+    // })
+    // ;
     for v in meta {
-        println!("{} {:?}", v.date_str, v.rust.missing_components(&v.manifest.unwrap()));
+        println!(
+            "{} {:?}",
+            v.date_str,
+            missing_components(&v.rust, &v.manifest.unwrap())
+        );
     }
-    
-        // .nth(0);
+
+    // .nth(0);
     // match value {
     //     Some(v) => match v.days {
     //         0 => println!("Use: \"rustup update\" (new version from {})", v.date_str),
