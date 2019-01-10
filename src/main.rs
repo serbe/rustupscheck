@@ -47,6 +47,12 @@ impl Rust {
     }
 }
 
+struct ManifestIter {
+    date: NaiveDate,
+    rust: Rust,
+    manifest: Option<Manifest>
+}
+
 fn missing_components(rust: &Rust, manifest: &Manifest) -> Vec<String> {
     rust.components
         .iter()
