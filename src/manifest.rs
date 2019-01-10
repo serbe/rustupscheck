@@ -118,7 +118,7 @@ impl Version {
             (split[0].to_string(), "")
         };
         let commit = Commit::from((hash, date))?;
-        let channel = Channel::from_str(channel).ok_or("Wrong channel".to_string())?;
+        let channel = Channel::from_str(channel).ok_or_else(|| "Wrong channel".to_string())?;
         Ok(Version {
             channel,
             version,

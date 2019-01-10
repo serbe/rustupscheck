@@ -10,19 +10,19 @@ use std::process::Command;
 use crate::manifest::{Manifest, Version};
 
 #[derive(Debug, Clone)]
-struct Rust {
+struct Toolchain {
     channel: String,
     target: String,
     version: Version,
     components: Vec<String>,
 }
 
-impl Rust {
-    fn new() -> Result<Rust, String> {
+impl Toolchain {
+    fn new() -> Result<Toolchain, String> {
         let (channel, target) = get_channel_target()?;
         let components = get_components(&target)?;
         let version = get_version()?;
-        Ok(Rust {
+        Ok(Toolchain {
             channel,
             target,
             version,
@@ -47,27 +47,85 @@ impl Rust {
     }
 }
 
-struct ManifestIter {
+#[derive(Debug, Clone)]
+pub struct Rust {
     date: NaiveDate,
-    rust: Rust,
-    manifest: Option<Manifest>
+    toolchain: Toolchain,
+    manifest: Option<Manifest>,
 }
 
-fn missing_components(rust: &Rust, manifest: &Manifest) -> Vec<String> {
-    rust.components
-        .iter()
-        .filter(|&c| {
-            let component = match manifest.renames.get(c) {
-                Some(rename) => rename.to.clone(),
-                None => c.to_string(),
-            };
-            match manifest.get_pkg_for_target(&component, &rust.target) {
-                Some(package_info) => !package_info.available,
-                None => true,
-            }
-        })
-        .cloned()
-        .collect()
+impl Rust {
+    pub fn new() -> Rust {
+        let toolchain = Toolchain::new().unwrap();
+        let date = Local::today().naive_local();
+        let manifest =
+            Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &toolchain.channel);
+        Rust {
+            toolchain,
+            date,
+            manifest,
+        }
+    }
+
+    pub fn missing_components(&self) -> Option<Vec<String>> {
+        match &self.manifest {
+            Some(manifest) => Some(
+                self.toolchain
+                    .components
+                    .iter()
+                    .filter(|&c| {
+                        let component = match manifest.renames.get(c) {
+                            Some(rename) => rename.to.clone(),
+                            None => c.to_string(),
+                        };
+                        match manifest.get_pkg_for_target(&component, &self.toolchain.target) {
+                            Some(package_info) => !package_info.available,
+                            None => true,
+                        }
+                    })
+                    .cloned()
+                    .collect(),
+            ),
+            None => None,
+        }
+    }
+
+    pub fn print_info(&self) {
+        println!("{}", &self.toolchain.info());
+    }
+}
+
+impl Default for Rust {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// impl IntoIterator for Rust {
+//     type Item = Rust;
+//     type IntoIter = Iterator::Rust;
+
+//     fn into_iter(self) -> Self::IntoIter {
+//         ManifestIter {
+//             date: self.date,
+//             toolchain: Toolchain::new().unwrap(),
+//             manifest: Some(self),
+//         }
+//     }
+// }
+
+impl Iterator for Rust {
+    type Item = Rust;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let old = self.clone();
+        self.date = self.date.sub(Duration::days(1));
+        self.manifest = Manifest::from_date(
+            &self.date.format("%Y-%m-%d").to_string(),
+            &self.toolchain.channel,
+        );
+        Some(old)
+    }
 }
 
 fn get_channel_target() -> Result<(String, String), String> {
@@ -114,66 +172,27 @@ fn get_version() -> Result<Version, String> {
     Ok(version)
 }
 
-#[derive(Debug, Clone)]
-struct Value {
-    offset: i64,
-    days: i64,
-    rust: Rust,
-    date: NaiveDate,
-    // date_str: String,
-    manifest: Option<Manifest>,
-}
+// impl Iterator for Meta {
+//     type Item = Value;
 
-impl Value {
-    fn new() -> Value {
-        let rust = Rust::new().unwrap();
-        let date = Local::today().naive_local();
-        let manifest = Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &rust.channel);
-        Value {
-            offset: 0,
-            days: 0,
-            // date_str,
-            rust,
-            date,
-            manifest,
-        }
-    }
-}
+//     fn next(&mut self) -> Option<Value> {
+//         self.value.offset += 1;
 
-struct Meta {
-    value: Value,
-}
-
-impl Meta {
-    fn new() -> Meta {
-        Meta {
-            value: Value::new(),
-        }
-    }
-
-    fn print_info(&self) {
-        println!("{}", self.value.rust.info());
-    }
-}
-
-impl Iterator for Meta {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Value> {
-        self.value.offset += 1;
-
-        let offset_date = self.value.date.sub(Duration::days(self.value.offset));
-        if offset_date >= self.value.rust.version.commit.date {
-            self.value.manifest = Manifest::from_date(&offset_date.format("%Y-%m-%d").to_string(), &self.value.rust.channel);
-            if self.value.manifest.is_some() {
-                self.value.days += 1;
-            }
-            Some(self.value.clone())
-        } else {
-            None
-        }
-    }
-}
+//         let offset_date = self.value.date.sub(Duration::days(self.value.offset));
+//         if offset_date >= self.value.toolchain.version.commit.date {
+//             self.value.manifest = Manifest::from_date(
+//                 &offset_date.format("%Y-%m-%d").to_string(),
+//                 &self.value.toolchain.channel,
+//             );
+//             if self.value.manifest.is_some() {
+//                 self.value.days += 1;
+//             }
+//             Some(self.value.clone())
+//         } else {
+//             None
+//         }
+//     }
+// }
 
 fn print_vec(input: &[String], comma: &str) -> String {
     input
@@ -189,8 +208,12 @@ fn print_vec(input: &[String], comma: &str) -> String {
 }
 
 fn main() {
-    let meta = Meta::new();
-    meta.print_info();
+    let rust = Rust::new();
+    rust.print_info();
+
+    for r in rust.take(2) {
+        println!("{}", r.date.format("%Y-%m-%d").to_string(),);
+    }
     // let value = meta
     // .filter(|v| {
     //     v.manifest.is_some()
@@ -199,13 +222,16 @@ fn main() {
     //             .is_empty()
     // })
     // ;
-    for v in meta {
-        println!(
-            "{} {:?}",
-            v.date.sub(Duration::days(v.offset)).format("%Y-%m-%d").to_string(),
-            missing_components(&v.rust, &v.manifest.unwrap())
-        );
-    }
+    // for v in meta {
+    //     println!(
+    //         "{} {:?}",
+    //         v.date
+    //             .sub(Duration::days(v.offset))
+    //             .format("%Y-%m-%d")
+    //             .to_string(),
+    //         missing_components(&v.toolchain, &v.manifest.unwrap())
+    //     );
+    // }
 
     // .nth(0);
     // match value {

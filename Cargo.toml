@@ -1,6 +1,6 @@
 [package]
 name = "rustupscheck"
-version = "0.6.0"
+version = "0.7.0"
 authors = ["Valeriy Kostikov <mkoctuk@gmail.com>"]
 edition = "2018"
 
