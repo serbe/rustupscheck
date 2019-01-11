@@ -1,13 +1,18 @@
 #[macro_use]
 extern crate serde_derive;
 
-mod manifest;
-
 use chrono::{naive::NaiveDate, Duration, Local};
+use native_tls::TlsConnector;
+use serde::{de::Error, Deserialize, Deserializer};
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::ops::Sub;
 use std::process::Command;
+use toml::from_str;
 
-use crate::manifest::{Manifest, Version};
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Clone)]
 struct Toolchain {
@@ -49,6 +54,7 @@ impl Toolchain {
 
 #[derive(Debug, Clone)]
 pub struct Rust {
+    offset: i64,
     date: NaiveDate,
     toolchain: Toolchain,
     manifest: Option<Manifest>,
@@ -61,33 +67,50 @@ impl Rust {
         let manifest =
             Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &toolchain.channel);
         Rust {
-            toolchain,
+            offset: -1,
             date,
+            toolchain,
             manifest,
         }
     }
 
-    pub fn missing_components(&self) -> Option<Vec<String>> {
-        match &self.manifest {
-            Some(manifest) => Some(
-                self.toolchain
-                    .components
-                    .iter()
-                    .filter(|&c| {
-                        let component = match manifest.renames.get(c) {
-                            Some(rename) => rename.to.clone(),
-                            None => c.to_string(),
-                        };
-                        match manifest.get_pkg_for_target(&component, &self.toolchain.target) {
-                            Some(package_info) => !package_info.available,
-                            None => true,
-                        }
-                    })
-                    .cloned()
-                    .collect(),
-            ),
-            None => None,
+    pub fn from_date(date_str: &str) -> Rust {
+        let toolchain = Toolchain::new().unwrap();
+        let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").unwrap();
+        let offset = (Local::today().naive_local() - date).num_days() - 1;
+        let manifest = Manifest::from_date(date_str, &toolchain.channel);
+        Rust {
+            offset,
+            date,
+            toolchain,
+            manifest,
         }
+    }
+
+    pub fn missing_components(&self) -> Vec<String> {
+        match &self.manifest {
+            Some(manifest) => self
+                .toolchain
+                .components
+                .iter()
+                .filter(|&c| {
+                    let component = match manifest.renames.get(c) {
+                        Some(rename) => rename.to.clone(),
+                        None => c.to_string(),
+                    };
+                    match manifest.get_pkg_for_target(&component, &self.toolchain.target) {
+                        Some(package_info) => !package_info.available,
+                        None => true,
+                    }
+                })
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    pub fn date_str(&self) -> String {
+        self.date.format("%Y-%m-%d").to_string()
     }
 
     pub fn print_info(&self) {
@@ -101,30 +124,19 @@ impl Default for Rust {
     }
 }
 
-// impl IntoIterator for Rust {
-//     type Item = Rust;
-//     type IntoIter = Iterator::Rust;
-
-//     fn into_iter(self) -> Self::IntoIter {
-//         ManifestIter {
-//             date: self.date,
-//             toolchain: Toolchain::new().unwrap(),
-//             manifest: Some(self),
-//         }
-//     }
-// }
-
 impl Iterator for Rust {
     type Item = Rust;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let old = self.clone();
-        self.date = self.date.sub(Duration::days(1));
+        self.offset += 1;
+        self.date = Local::today()
+            .naive_local()
+            .sub(Duration::days(self.offset));
         self.manifest = Manifest::from_date(
             &self.date.format("%Y-%m-%d").to_string(),
             &self.toolchain.channel,
         );
-        Some(old)
+        Some(self.clone())
     }
 }
 
@@ -172,28 +184,6 @@ fn get_version() -> Result<Version, String> {
     Ok(version)
 }
 
-// impl Iterator for Meta {
-//     type Item = Value;
-
-//     fn next(&mut self) -> Option<Value> {
-//         self.value.offset += 1;
-
-//         let offset_date = self.value.date.sub(Duration::days(self.value.offset));
-//         if offset_date >= self.value.toolchain.version.commit.date {
-//             self.value.manifest = Manifest::from_date(
-//                 &offset_date.format("%Y-%m-%d").to_string(),
-//                 &self.value.toolchain.channel,
-//             );
-//             if self.value.manifest.is_some() {
-//                 self.value.days += 1;
-//             }
-//             Some(self.value.clone())
-//         } else {
-//             None
-//         }
-//     }
-// }
-
 fn print_vec(input: &[String], comma: &str) -> String {
     input
         .iter()
@@ -207,49 +197,189 @@ fn print_vec(input: &[String], comma: &str) -> String {
         })
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Manifest {
+    #[serde(deserialize_with = "u8_from_str")]
+    pub manifest_version: u8,
+    pub date: NaiveDate,
+    pub pkg: HashMap<String, PackageTargets>,
+    pub renames: HashMap<String, Rename>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PackageTargets {
+    pub version: String,
+    pub target: HashMap<String, PackageInfo>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PackageInfo {
+    pub available: bool,
+    pub url: Option<String>,
+    pub hash: Option<String>,
+    pub xz_url: Option<String>,
+    pub xz_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Rename {
+    pub to: String,
+}
+
+impl Manifest {
+    pub fn from_date(date: &str, channel: &str) -> Option<Self> {
+        let path = format!("/dist/{}/channel-rust-{}.toml", date, channel);
+        fetch_manifest(&path).ok()
+    }
+
+    pub fn get_pkg_for_target(&self, pkg: &str, target: &str) -> Option<PackageInfo> {
+        match self.pkg.get(pkg) {
+            Some(package_target) => match package_target.target.get(target) {
+                Some(package_info) => Some(package_info.clone()),
+                None => match package_target.target.get("*") {
+                    Some(package_info) => Some(package_info.clone()),
+                    None => None,
+                },
+            },
+            None => None,
+        }
+    }
+
+    pub fn get_rust_version(&self) -> Result<Version, String> {
+        let pkg_rust = self
+            .pkg
+            .get("rust")
+            .ok_or("Manifest not contain pkg rust")?;
+        Version::from_str(&pkg_rust.version)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Channel {
+    Stable,
+    Beta,
+    Nightly,
+}
+
+impl Channel {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "stable" | "" => Some(Channel::Stable),
+            "beta" => Some(Channel::Beta),
+            "nightly" => Some(Channel::Nightly),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Commit {
+    pub hash: String,
+    pub date: NaiveDate,
+}
+
+impl Commit {
+    fn from(input: (&str, &str)) -> Result<Self, String> {
+        Ok(Commit {
+            hash: input.0.to_string(),
+            date: NaiveDate::parse_from_str(input.1, "%Y-%m-%d").map_err(|e| e.to_string())?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Version {
+    pub channel: Channel,
+    pub version: String,
+    pub commit: Commit,
+}
+
+impl Version {
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        let split: Vec<&str> = s
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c| c == '(' || c == ')'))
+            .collect();
+        let (raw_version, hash, date) = (split[0], split[1], split[2]);
+        let split: Vec<&str> = raw_version.split('-').collect();
+        let (version, channel) = if split.len() == 2 {
+            (split[0].to_string(), split[1])
+        } else {
+            (split[0].to_string(), "")
+        };
+        let commit = Commit::from((hash, date))?;
+        let channel = Channel::from_str(channel).ok_or_else(|| "Wrong channel".to_string())?;
+        Ok(Version {
+            channel,
+            version,
+            commit,
+        })
+    }
+}
+
+fn u8_from_str<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &str = Deserialize::deserialize(deserializer)?;
+    u8::from_str_radix(s, 10).map_err(D::Error::custom)
+}
+
+pub fn fetch_manifest(path: &str) -> Result<Manifest, String> {
+    let connector = TlsConnector::new().map_err(|e| e.to_string())?;
+    let stream = TcpStream::connect("static.rust-lang.org:443").map_err(|e| e.to_string())?;
+    let mut stream = connector
+        .connect("static.rust-lang.org", stream)
+        .map_err(|e| e.to_string())?;
+    let request = format!(
+        "GET {} HTTP/1.0\r\nHost: static.rust-lang.org\r\n\r\n",
+        path
+    )
+    .into_bytes();
+    stream.write_all(&request).map_err(|e| e.to_string())?;
+    let mut response = vec![];
+    stream
+        .read_to_end(&mut response)
+        .map_err(|e| e.to_string())?;
+    let body = get_body(&response)?;
+    let manifest = from_str(&body).map_err(|e| e.to_string())?;
+    Ok(manifest)
+}
+
+fn get_body(response: &[u8]) -> Result<&str, String> {
+    let pos = response
+        .windows(4)
+        .position(|x| x == b"\r\n\r\n")
+        .ok_or("Not search pattern")?;
+    let body = &response[pos + 4..response.len()];
+    std::str::from_utf8(&body).map_err(|e| e.to_string())
+}
+
 fn main() {
     let rust = Rust::new();
     rust.print_info();
 
-    for r in rust.take(2) {
-        println!("{}", r.date.format("%Y-%m-%d").to_string(),);
-    }
-    // let value = meta
-    // .filter(|v| {
-    //     v.manifest.is_some()
-    //         && v.rust
-    //             .missing_components(&v.manifest.clone().unwrap())
-    //             .is_empty()
-    // })
-    // ;
-    // for v in meta {
-    //     println!(
-    //         "{} {:?}",
-    //         v.date
-    //             .sub(Duration::days(v.offset))
-    //             .format("%Y-%m-%d")
-    //             .to_string(),
-    //         missing_components(&v.toolchain, &v.manifest.unwrap())
-    //     );
-    // }
+    let value = rust
+        .filter(|r| r.manifest.is_some() && r.missing_components().is_empty())
+        .nth(0);
 
-    // .nth(0);
-    // match value {
-    //     Some(v) => match v.days {
-    //         0 => println!("Use: \"rustup update\" (new version from {})", v.date_str),
-    //         _ => println!(
-    //             "Use: \"rustup default {}-{}\"{}",
-    //             v.rust.channel,
-    //             v.date_str,
-    //             match v.rust.components.len() {
-    //                 0 => String::new(),
-    //                 _ => format!(
-    //                     "\n     \"rustup component add {}\"",
-    //                     print_vec(&v.rust.components, " ")
-    //                 ),
-    //             }
-    //         ),
-    //     },
-    //     None => println!("error: no found version with all components"),
-    // }
+    match value {
+        Some(v) => match v.offset {
+            0 => println!("Use: \"rustup update\" (new version from {})", v.date_str()),
+            _ => println!(
+                "Use: \"rustup default {}-{}\"{}",
+                v.toolchain.channel,
+                v.date_str(),
+                match v.toolchain.components.len() {
+                    0 => String::new(),
+                    _ => format!(
+                        "\n     \"rustup component add {}\"",
+                        print_vec(&v.toolchain.components, " ")
+                    ),
+                }
+            ),
+        },
+        None => println!("error: no found version with all components"),
+    }
 }
