@@ -206,7 +206,7 @@ fn print_vec(input: &[String], comma: &str) -> String {
         })
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub struct Manifest {
     #[serde(deserialize_with = "u8_from_str")]
@@ -214,26 +214,6 @@ pub struct Manifest {
     pub date: NaiveDate,
     pub pkg: HashMap<String, PackageTargets>,
     pub renames: HashMap<String, Rename>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct PackageTargets {
-    pub version: String,
-    pub target: HashMap<String, PackageInfo>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct PackageInfo {
-    pub available: bool,
-    pub url: Option<String>,
-    pub hash: Option<String>,
-    pub xz_url: Option<String>,
-    pub xz_hash: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct Rename {
-    pub to: String,
 }
 
 impl Manifest {
@@ -261,6 +241,57 @@ impl Manifest {
             .get("rust")
             .ok_or("Manifest not contain pkg rust")?;
         Version::from_str(&pkg_rust.version)
+    }
+}
+
+impl PartialEq for Manifest {
+    fn eq(&self, other: &Manifest) -> bool {
+        self.manifest_version == other.manifest_version
+            && self.date == other.date
+            && self.pkg == other.pkg
+            && self.renames == other.renames
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq)]
+pub struct PackageTargets {
+    pub version: String,
+    pub target: HashMap<String, PackageInfo>,
+}
+
+impl PartialEq for PackageTargets {
+    fn eq(&self, other: &PackageTargets) -> bool {
+        self.version == other.version && self.target == other.target
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq)]
+pub struct PackageInfo {
+    pub available: bool,
+    pub url: Option<String>,
+    pub hash: Option<String>,
+    pub xz_url: Option<String>,
+    pub xz_hash: Option<String>,
+}
+
+impl PartialEq for PackageInfo {
+    fn eq(&self, other: &PackageInfo) -> bool {
+        self.available == other.available
+            && self.url == other.url
+            && self.hash == other.hash
+            && self.xz_url == other.xz_url
+            && self.xz_hash == other.xz_hash
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq)]
+pub struct Rename {
+    pub to: String,
+}
+
+impl PartialEq for Rename {
+    fn eq(&self, other: &Rename) -> bool {
+        self.to == other.to
     }
 }
 
@@ -446,34 +477,23 @@ fn main() {
         .nth(0)
         .unwrap();
 
-    println!("{:?}", v.toolchain.version);
-    println!("{:?}", v.manifest_rust_version());
-    println!(
-        "{:?}",
-        v.toolchain.version.cmp(&v.manifest_rust_version().unwrap())
-    );
-
-    // // match value {
-    //     // Some(v) =>
-    //     match (
-    //         v.offset,
-    //         v.toolchain.version > v.manifest.clone().unwrap().get_rust_version().unwrap(),
-    //     ) {
-    //         (0, true) => println!("Use: \"rustup update\" (new version from {})", v.date_str()),
-    //         (0, false) => println!("Current version is up to date"),
-    //         _ => println!(
-    //             "Use: \"rustup default {}-{}\"{}",
-    //             v.toolchain.channel,
-    //             v.date_str(),
-    //             match v.toolchain.components.len() {
-    //                 0 => String::new(),
-    //                 _ => format!(
-    //                     "\n     \"rustup component add {}\"",
-    //                     print_vec(&v.toolchain.components, " ")
-    //                 ),
-    //             }
-    //         ),
-    //     // },
-    //     // None => println!("error: no found version with all components"),
-    // }
+    match (
+        v.offset,
+        v.toolchain.version < v.manifest.clone().unwrap().get_rust_version().unwrap(),
+    ) {
+        (0, true) => println!("Use: \"rustup update\" (new version from {})", v.date_str()),
+        (0, false) => println!("Current version is up to date"),
+        _ => println!(
+            "Use: \"rustup default {}-{}\"{}",
+            v.toolchain.channel,
+            v.date_str(),
+            match v.toolchain.components.len() {
+                0 => String::new(),
+                _ => format!(
+                    "\n     \"rustup component add {}\"",
+                    print_vec(&v.toolchain.components, " ")
+                ),
+            }
+        ),
+    }
 }

@@ -50,10 +50,12 @@ fn wrong_path() {
 
 #[test]
 fn new_year_manifest() {
+    let manifest_from_date = Manifest::from_date("2019-01-01", "nightly");
     let path = "/dist/2019-01-01/channel-rust-nightly.toml";
     let optional_manifest = fetch_manifest(path);
     assert!(optional_manifest.is_ok());
     let manifest = optional_manifest.unwrap();
+    assert_eq!(manifest_from_date.unwrap(), manifest);
     assert_eq!(manifest.manifest_version, 2u8);
     assert_eq!(
         Ok(manifest.date),
