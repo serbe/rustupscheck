@@ -4,11 +4,13 @@ extern crate serde_derive;
 use chrono::{naive::NaiveDate, Duration, Local};
 use native_tls::TlsConnector;
 use serde::{de::Error, Deserialize, Deserializer};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::ops::Sub;
 use std::process::Command;
+use std::str::FromStr;
 use toml::from_str;
 
 #[cfg(test)]
@@ -106,6 +108,13 @@ impl Rust {
                 .cloned()
                 .collect(),
             None => Vec::new(),
+        }
+    }
+
+    pub fn manifest_rust_version(&self) -> Option<Version> {
+        match &self.manifest {
+            Some(manifest) => manifest.get_rust_version().ok(),
+            None => None,
         }
     }
 
@@ -255,7 +264,7 @@ impl Manifest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Channel {
     Stable,
     Beta,
@@ -271,9 +280,29 @@ impl Channel {
             _ => None,
         }
     }
+
+    fn to_u8(&self) -> u8 {
+        match self {
+            Channel::Stable => 0,
+            Channel::Beta => 1,
+            Channel::Nightly => 2,
+        }
+    }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+impl PartialOrd for Channel {
+    fn partial_cmp(&self, other: &Channel) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Channel {
+    fn cmp(&self, other: &Channel) -> Ordering {
+        self.to_u8().cmp(&other.to_u8())
+    }
+}
+
+#[derive(Clone, Debug, Eq)]
 pub struct Commit {
     pub hash: String,
     pub date: NaiveDate,
@@ -288,15 +317,67 @@ impl Commit {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+impl PartialOrd for Commit {
+    fn partial_cmp(&self, other: &Commit) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Commit {
+    fn cmp(&self, other: &Commit) -> Ordering {
+        self.date.cmp(&other.date)
+    }
+}
+
+impl PartialEq for Commit {
+    fn eq(&self, other: &Commit) -> bool {
+        self.date == other.date
+    }
+}
+
+#[derive(Clone, Debug, Eq)]
 pub struct Version {
     pub channel: Channel,
     pub version: String,
     pub commit: Commit,
 }
 
-impl Version {
-    pub fn from_str(s: &str) -> Result<Self, String> {
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Version) -> Option<Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Version) -> Ordering {
+        match self.channel.cmp(&other.channel) {
+            Ordering::Greater => Ordering::Greater,
+            Ordering::Less => Ordering::Less,
+            Ordering::Equal => match self.version.cmp(&other.version) {
+                Ordering::Greater => Ordering::Greater,
+                Ordering::Less => Ordering::Less,
+                Ordering::Equal => match self.commit.cmp(&other.commit) {
+                    Ordering::Greater => Ordering::Greater,
+                    Ordering::Less => Ordering::Less,
+                    Ordering::Equal => Ordering::Equal,
+                },
+            },
+        }
+    }
+}
+
+impl PartialEq for Version {
+    fn eq(&self, other: &Version) -> bool {
+        self.channel == other.channel
+            && self.version == other.version
+            && self.commit.date == other.commit.date
+    }
+}
+
+impl FromStr for Version {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let split: Vec<&str> = s
             .split_whitespace()
             .map(|w| w.trim_matches(|c| c == '(' || c == ')'))
@@ -360,26 +441,39 @@ fn main() {
     let rust = Rust::new();
     rust.print_info();
 
-    let value = rust
+    let v = rust
         .filter(|r| r.manifest.is_some() && r.missing_components().is_empty())
-        .nth(0);
+        .nth(0)
+        .unwrap();
 
-    match value {
-        Some(v) => match v.offset {
-            0 => println!("Use: \"rustup update\" (new version from {})", v.date_str()),
-            _ => println!(
-                "Use: \"rustup default {}-{}\"{}",
-                v.toolchain.channel,
-                v.date_str(),
-                match v.toolchain.components.len() {
-                    0 => String::new(),
-                    _ => format!(
-                        "\n     \"rustup component add {}\"",
-                        print_vec(&v.toolchain.components, " ")
-                    ),
-                }
-            ),
-        },
-        None => println!("error: no found version with all components"),
-    }
+    println!("{:?}", v.toolchain.version);
+    println!("{:?}", v.manifest_rust_version());
+    println!(
+        "{:?}",
+        v.toolchain.version.cmp(&v.manifest_rust_version().unwrap())
+    );
+
+    // // match value {
+    //     // Some(v) =>
+    //     match (
+    //         v.offset,
+    //         v.toolchain.version > v.manifest.clone().unwrap().get_rust_version().unwrap(),
+    //     ) {
+    //         (0, true) => println!("Use: \"rustup update\" (new version from {})", v.date_str()),
+    //         (0, false) => println!("Current version is up to date"),
+    //         _ => println!(
+    //             "Use: \"rustup default {}-{}\"{}",
+    //             v.toolchain.channel,
+    //             v.date_str(),
+    //             match v.toolchain.components.len() {
+    //                 0 => String::new(),
+    //                 _ => format!(
+    //                     "\n     \"rustup component add {}\"",
+    //                     print_vec(&v.toolchain.components, " ")
+    //                 ),
+    //             }
+    //         ),
+    //     // },
+    //     // None => println!("error: no found version with all components"),
+    // }
 }

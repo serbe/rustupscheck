@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn printvec() {
+    let test_vec = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    assert_eq!(print_vec(&test_vec, ""), "abc");
+    assert_eq!(print_vec(&test_vec, ","), "a,b,c");
+    assert_eq!(print_vec(&test_vec, " , "), "a , b , c");
+}
+
+#[test]
+fn channel() {
+    assert!(Channel::Beta > Channel::Stable);
+    assert!(Channel::Nightly > Channel::Beta);
+    assert!(Channel::Stable == Channel::Stable);
+    assert!(Channel::Stable < Channel::Nightly);
+}
+
+#[test]
+fn commit() {
+    let c1 = Commit::from(("12fa34b", "2018-31-12"));
+    let c2 = Commit::from(("12fa34b", "2018-12-31"));
+    let c3 = Commit::from(("12fa34a", "2018-12-31"));
+    let c4 = Commit::from(("12fa34b", "2019-01-01"));
+    assert!(c1.is_err());
+    assert!(c2.is_ok());
+    assert!(c2 == c3);
+    assert!(c3 < c4);
+}
+
+#[test]
 fn body() {
     let response = b"HTTP/2.0 200 OK\r\nx-amz-bucket-region: us-west-1\r\nserver: AmazonS3\r\nx-cache: Miss from cloudfront\r\n\r\ntest message";
     assert_eq!(get_body(response), Ok("test message"));
@@ -19,9 +47,6 @@ fn wrong_path() {
     let manifest = fetch_manifest(path);
     assert!(manifest.is_err());
 }
-
-#[test]
-fn rust() {}
 
 #[test]
 fn new_year_manifest() {
