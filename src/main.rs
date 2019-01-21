@@ -111,9 +111,9 @@ impl Rust {
         }
     }
 
-    pub fn manifest_rust_version(&self) -> Option<Version> {
+    pub fn manifest_pkg_version(&self, name: &str) -> Option<Version> {
         match &self.manifest {
-            Some(manifest) => manifest.get_rust_version().ok(),
+            Some(manifest) => manifest.get_pkg_version(name).ok(),
             None => None,
         }
     }
@@ -235,12 +235,12 @@ impl Manifest {
         }
     }
 
-    pub fn get_rust_version(&self) -> Result<Version, String> {
-        let pkg_rust = self
+    pub fn get_pkg_version(&self, name: &str) -> Result<Version, String> {
+        let pkg = self
             .pkg
-            .get("rust")
-            .ok_or("Manifest not contain pkg rust")?;
-        Version::from_str(&pkg_rust.version)
+            .get(name)
+            .ok_or(format!("Manifest not contain pkg {}", name))?;
+        Version::from_str(&pkg.version)
     }
 }
 
@@ -479,7 +479,7 @@ fn main() {
 
     match (
         v.offset,
-        v.toolchain.version < v.manifest.clone().unwrap().get_rust_version().unwrap(),
+        v.toolchain.version < v.manifest_pkg_version("rust").unwrap(),
     ) {
         (0, true) => println!("Use: \"rustup update\" (new version from {})", v.date_str()),
         (0, false) => println!("Current version is up to date"),

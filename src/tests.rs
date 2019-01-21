@@ -73,7 +73,7 @@ fn new_year_manifest() {
             date: NaiveDate::parse_from_str(&"2018-12-31", "%Y-%m-%d").unwrap(),
         },
     };
-    assert_eq!(manifest.get_rust_version(), Ok(rust1330));
+    assert_eq!(manifest.get_pkg_version("rust"), Ok(rust1330));
     let rust_src = manifest.pkg.get("rust-src").unwrap();
     let target_info = rust_src.target.get("x86_64-pc-windows-gnu");
     assert!(target_info.is_none());
