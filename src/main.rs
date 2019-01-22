@@ -4,13 +4,17 @@ extern crate serde_derive;
 use chrono::{naive::NaiveDate, Duration, Local};
 use native_tls::TlsConnector;
 use serde::{de::Error, Deserialize, Deserializer};
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::ops::Sub;
-use std::process::Command;
-use std::str::FromStr;
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    env,
+    fs::File,
+    io::{Read, Write},
+    net::TcpStream,
+    ops::Sub,
+    path::PathBuf,
+    str::FromStr,
+};
 use toml::from_str;
 
 #[cfg(test)]
@@ -20,31 +24,32 @@ mod tests;
 struct Toolchain {
     channel: String,
     target: String,
-    version: Version,
     components: Vec<String>,
+    manifest: Manifest,
 }
 
 impl Toolchain {
     fn new() -> Result<Toolchain, String> {
         let (channel, target) = get_channel_target()?;
         let components = get_components(&target)?;
-        let version = get_version()?;
+        let manifest = get_manifest()?;
         Ok(Toolchain {
             channel,
             target,
-            version,
             components,
+            manifest,
         })
     }
 
     fn info(&self) -> String {
+        let version = self.manifest.get_pkg_version("rustc").unwrap();
         format!(
             "Installed: {}-{} {} ({} {})\n{}",
             self.channel,
             self.target,
-            self.version.version,
-            self.version.commit.hash,
-            self.version.commit.date,
+            version.version,
+            version.commit.hash,
+            version.commit.date,
             match self.components.len() {
                 0 => "With no components".to_string(),
                 1 => format!("With component: {}", self.components[0]),
@@ -150,47 +155,50 @@ impl Iterator for Rust {
 }
 
 fn get_channel_target() -> Result<(String, String), String> {
-    let command = Command::new("rustup")
-        .arg("show")
-        .arg("active-toolchain")
-        .output()
-        .expect("failed to execute process");
-    let output = String::from_utf8(command.stdout).map_err(|e| e.to_string())?;
-    let split: Vec<&str> = output.trim().splitn(2, '-').collect();
+    let toolchain = env::var("RUSTUP_TOOLCHAIN").map_err(|e| e.to_string())?;
+    let split: Vec<&str> = toolchain.splitn(2, '-').collect();
     let channel = split[0].to_string();
     let target = split[1].to_string();
     Ok((channel, target))
 }
 
 fn get_components(target: &str) -> Result<Vec<String>, String> {
-    let command = Command::new("rustup")
-        .arg("component")
-        .arg("list")
-        .output()
-        .expect("failed to execute process");
-    let output = String::from_utf8(command.stdout).map_err(|e| e.to_string())?;
-    let split: Vec<&str> = output
+    let rustup_home = env::var("RUSTUP_HOME").map_err(|e| e.to_string())?;
+    let toolchain = env::var("RUSTUP_TOOLCHAIN").map_err(|e| e.to_string())?;
+    let mut path = PathBuf::from(rustup_home);
+    path.push("toolchains");
+    path.push(toolchain);
+    path.push("lib");
+    path.push("rustlib");
+    path.push("components");
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|e| e.to_string())?;
+    let components: Vec<String> = contents
         .split('\n')
-        .filter(|&s| s.contains("(installed)"))
-        .collect();
-    let components: Vec<String> = split
-        .iter()
-        .map(|s| {
-            s.replace(" (installed)", "")
-                .replace(&format!("-{}", target), "")
-        })
+        .filter(|s| !s.is_empty())
+        .map(|s| s.replace(&format!("-{}", target), ""))
         .collect();
     Ok(components)
 }
 
-fn get_version() -> Result<Version, String> {
-    let command = Command::new("rustc")
-        .arg("-V")
-        .output()
-        .expect("failed to execute process");
-    let output = String::from_utf8(command.stdout).map_err(|e| e.to_string())?;
-    let version = Version::from_str(&output.replace("rustc ", ""))?;
-    Ok(version)
+fn get_manifest() -> Result<Manifest, String> {
+    let rustup_home = env::var("RUSTUP_HOME").unwrap();
+    let toolchain = env::var("RUSTUP_TOOLCHAIN").unwrap();
+    let mut path = PathBuf::from(rustup_home);
+    path.push("toolchains");
+    path.push(toolchain);
+    path.push("lib");
+    path.push("rustlib");
+    path.push("multirust-channel-manifest");
+    path.set_extension("toml");
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|e| e.to_string())?;
+    let manifest: Manifest = toml::from_str(&contents).map_err(|e| e.to_string())?;
+    Ok(manifest)
 }
 
 fn print_vec(input: &[String], comma: &str) -> String {
@@ -239,7 +247,7 @@ impl Manifest {
         let pkg = self
             .pkg
             .get(name)
-            .ok_or(format!("Manifest not contain pkg {}", name))?;
+            .ok_or_else(|| format!("Manifest not contain pkg {}", name))?;
         Version::from_str(&pkg.version)
     }
 }
@@ -479,7 +487,7 @@ fn main() {
 
     match (
         v.offset,
-        v.toolchain.version < v.manifest_pkg_version("rust").unwrap(),
+        v.toolchain.manifest.get_pkg_version("rust").ok() < v.manifest_pkg_version("rust"),
     ) {
         (0, true) => println!("Use: \"rustup update\" (new version from {})", v.date_str()),
         (0, false) => println!("Current version is up to date"),

@@ -13,3 +13,6 @@
 
 /target
 **/*.rs.bk
+
+.idea
+.vscode/
