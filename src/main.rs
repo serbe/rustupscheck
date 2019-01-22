@@ -21,24 +21,57 @@ use toml::from_str;
 mod tests;
 
 #[derive(Debug, Clone)]
+struct Component {
+    name: String,
+    required: bool,
+    version: Version,
+}
+
+impl Component {
+    fn from(manifest: &Manifest, name: &str) -> Self {
+        let required = match name {
+            "rustc" | "cargo" => true,
+            _ => false,
+        };
+        let version = manifest.get_pkg_version(name).unwrap();
+        Component {
+            name: name.to_string(),
+            required,
+            version,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Toolchain {
     channel: String,
     target: String,
-    components: Vec<String>,
+    components: Vec<Component>,
     manifest: Manifest,
 }
 
 impl Toolchain {
     fn new() -> Result<Toolchain, String> {
         let (channel, target) = get_channel_target()?;
-        let components = get_components(&target)?;
         let manifest = get_manifest()?;
+        let components = get_components(&target)?
+            .iter()
+            .map(|s| Component::from(&manifest, s))
+            .collect();
         Ok(Toolchain {
             channel,
             target,
             components,
             manifest,
         })
+    }
+
+    fn component_list(&self) -> Vec<String> {
+        self.components
+            .iter()
+            .filter(|c| !c.required)
+            .map(|c| c.name.to_string())
+            .collect()
     }
 
     fn info(&self) -> String {
@@ -50,10 +83,13 @@ impl Toolchain {
             version.version,
             version.commit.hash,
             version.commit.date,
-            match self.components.len() {
+            match self.component_list().len() {
                 0 => "With no components".to_string(),
-                1 => format!("With component: {}", self.components[0]),
-                _ => format!("With components: {}", print_vec(&self.components, ", ")),
+                1 => format!("With component: {}", self.component_list()[0]),
+                _ => format!(
+                    "With components: {}",
+                    print_vec(&self.component_list(), ", ")
+                ),
             }
         )
     }
@@ -100,6 +136,7 @@ impl Rust {
                 .toolchain
                 .components
                 .iter()
+                .map(|c| &c.name)
                 .filter(|&c| {
                     let component = match manifest.renames.get(c) {
                         Some(rename) => rename.to.clone(),
@@ -499,7 +536,7 @@ fn main() {
                 0 => String::new(),
                 _ => format!(
                     "\n     \"rustup component add {}\"",
-                    print_vec(&v.toolchain.components, " ")
+                    print_vec(&v.toolchain.component_list(), " ")
                 ),
             }
         ),
