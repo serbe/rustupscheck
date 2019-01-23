@@ -42,6 +42,16 @@ impl Component {
             Err(_) => None,
         }
     }
+
+    fn to_string(&self) -> String {
+        format!(
+            "{} {} ({} {})",
+            self.name,
+            self.version.version,
+            self.version.commit.hash,
+            self.version.commit.date.format("%Y-%m-%d").to_string()
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -187,11 +197,7 @@ impl Rust {
                 self.toolchain
                     .components
                     .iter()
-                    .filter(|c| {
-                        Some(c.version.clone())
-                            < manifest
-                                .get_pkg_version(&c.name).ok()
-                    })
+                    .filter(|c| Some(c.version.clone()) < manifest.get_pkg_version(&c.name).ok())
                     .cloned()
                     .collect(),
             )
@@ -552,10 +558,29 @@ fn main() {
         v.offset,
         v.toolchain.manifest.get_pkg_version("rust").ok() < v.manifest_pkg_version("rust"),
     ) {
-        (0, true) => println!("Use: \"rustup update\" (new version from {})", v.date_str()),
+        (0, true) => println!(
+            "{}\nUse: \"rustup update\" (new version from {})",
+            v.update_info()
+                .unwrap()
+                .iter()
+                .fold(String::new(), |mut acc, c| {
+                    acc.push_str(&c.to_string());
+                    acc.push('\n');
+                    acc
+                }),
+            v.date_str()
+        ),
         (0, false) => println!("Current version is up to date"),
         _ => println!(
-            "Use: \"rustup default {}-{}\"{}",
+            "{}\nUse: \"rustup default {}-{}\"{}",
+            v.update_info()
+                .unwrap()
+                .iter()
+                .fold(String::new(), |mut acc, c| {
+                    acc.push_str(&c.to_string());
+                    acc.push('\n');
+                    acc
+                }),
             v.toolchain.channel,
             v.date_str(),
             match v.toolchain.components.len() {
