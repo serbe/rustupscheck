@@ -58,7 +58,7 @@ impl Toolchain {
         let manifest = get_manifest()?;
         let components = get_components(&target)?
             .iter()
-            .map(|s| Component::from(&manifest, s).unwrap())
+            .filter_map(|s| Component::from(&manifest, s))
             .collect();
         Ok(Toolchain {
             channel,
@@ -108,29 +108,37 @@ pub struct Rust {
 }
 
 impl Rust {
-    pub fn new() -> Rust {
-        let toolchain = Toolchain::new().unwrap();
-        let date = Local::today().naive_local();
-        let manifest =
-            Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &toolchain.channel);
-        Rust {
-            offset: -1,
-            date,
-            toolchain,
-            manifest,
+    pub fn new() -> Option<Rust> {
+        match Toolchain::new() {
+            Ok(toolchain) => {
+                let date = Local::today().naive_local();
+                let manifest =
+                    Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &toolchain.channel);
+                Some(Rust {
+                    offset: -1,
+                    date,
+                    toolchain,
+                    manifest,
+                })
+            }
+            Err(_) => None,
         }
     }
 
-    pub fn from_date(date_str: &str) -> Rust {
-        let toolchain = Toolchain::new().unwrap();
-        let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").unwrap();
-        let offset = (Local::today().naive_local() - date).num_days() - 1;
-        let manifest = Manifest::from_date(date_str, &toolchain.channel);
-        Rust {
-            offset,
-            date,
-            toolchain,
-            manifest,
+    pub fn from_date(date_str: &str) -> Option<Rust> {
+        match Toolchain::new() {
+            Ok(toolchain) => {
+                let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
+                let offset = (Local::today().naive_local() - date).num_days() - 1;
+                let manifest = Manifest::from_date(date_str, &toolchain.channel);
+                Some(Rust {
+                    offset,
+                    date,
+                    toolchain,
+                    manifest,
+                })
+            }
+            Err(_) => None,
         }
     }
 
@@ -174,18 +182,15 @@ impl Rust {
 
     fn update_info(&self) -> Option<Vec<Component>> {
         if self.missing_components().is_empty() {
+            let manifest = self.manifest.clone()?;
             Some(
                 self.toolchain
                     .components
                     .iter()
                     .filter(|c| {
-                        c.version
-                            != self
-                                .manifest
-                                .clone()
-                                .unwrap()
-                                .get_pkg_version(&c.name)
-                                .unwrap()
+                        Some(c.version.clone())
+                            < manifest
+                                .get_pkg_version(&c.name).ok()
                     })
                     .cloned()
                     .collect(),
@@ -193,12 +198,6 @@ impl Rust {
         } else {
             None
         }
-    }
-}
-
-impl Default for Rust {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -248,8 +247,8 @@ fn get_components(target: &str) -> Result<Vec<String>, String> {
 }
 
 fn get_manifest() -> Result<Manifest, String> {
-    let rustup_home = env::var("RUSTUP_HOME").unwrap();
-    let toolchain = env::var("RUSTUP_TOOLCHAIN").unwrap();
+    let rustup_home = env::var("RUSTUP_HOME").map_err(|e| e.to_string())?;
+    let toolchain = env::var("RUSTUP_TOOLCHAIN").map_err(|e| e.to_string())?;
     let mut path = PathBuf::from(rustup_home);
     path.push("toolchains");
     path.push(toolchain);
@@ -541,7 +540,7 @@ fn get_body(response: &[u8]) -> Result<&str, String> {
 }
 
 fn main() {
-    let rust = Rust::new();
+    let rust = Rust::new().unwrap();
     rust.print_info();
 
     let v = rust
