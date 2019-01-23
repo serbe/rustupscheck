@@ -28,16 +28,18 @@ struct Component {
 }
 
 impl Component {
-    fn from(manifest: &Manifest, name: &str) -> Self {
+    fn from(manifest: &Manifest, name: &str) -> Option<Self> {
         let required = match name {
             "rustc" | "cargo" => true,
             _ => false,
         };
-        let version = manifest.get_pkg_version(name).unwrap();
-        Component {
-            name: name.to_string(),
-            required,
-            version,
+        match manifest.get_pkg_version(name) {
+            Ok(version) => Some(Component {
+                name: name.to_string(),
+                required,
+                version,
+            }),
+            Err(_) => None,
         }
     }
 }
@@ -56,7 +58,7 @@ impl Toolchain {
         let manifest = get_manifest()?;
         let components = get_components(&target)?
             .iter()
-            .map(|s| Component::from(&manifest, s))
+            .map(|s| Component::from(&manifest, s).unwrap())
             .collect();
         Ok(Toolchain {
             channel,
@@ -75,23 +77,25 @@ impl Toolchain {
     }
 
     fn info(&self) -> String {
-        let version = self.manifest.get_pkg_version("rustc").unwrap();
-        format!(
-            "Installed: {}-{} {} ({} {})\n{}",
-            self.channel,
-            self.target,
-            version.version,
-            version.commit.hash,
-            version.commit.date,
-            match self.component_list().len() {
-                0 => "With no components".to_string(),
-                1 => format!("With component: {}", self.component_list()[0]),
-                _ => format!(
-                    "With components: {}",
-                    print_vec(&self.component_list(), ", ")
-                ),
-            }
-        )
+        match self.manifest.get_pkg_version("rustc") {
+            Ok(version) => format!(
+                "Installed: {}-{} {} ({} {})\n{}",
+                self.channel,
+                self.target,
+                version.version,
+                version.commit.hash,
+                version.commit.date,
+                match self.component_list().len() {
+                    0 => "With no components".to_string(),
+                    1 => format!("With component: {}", self.component_list()[0]),
+                    _ => format!(
+                        "With components: {}",
+                        print_vec(&self.component_list(), ", ")
+                    ),
+                }
+            ),
+            Err(_) => String::from("Not found installed rustc"),
+        }
     }
 }
 
@@ -170,7 +174,22 @@ impl Rust {
 
     fn update_info(&self) -> Option<Vec<Component>> {
         if self.missing_components().is_empty() {
-            Some(self.toolchain.components.iter().filter(|c| c.version != self.manifest.clone().unwrap().get_pkg_version(&c.name).unwrap()).cloned().collect())
+            Some(
+                self.toolchain
+                    .components
+                    .iter()
+                    .filter(|c| {
+                        c.version
+                            != self
+                                .manifest
+                                .clone()
+                                .unwrap()
+                                .get_pkg_version(&c.name)
+                                .unwrap()
+                    })
+                    .cloned()
+                    .collect(),
+            )
         } else {
             None
         }
