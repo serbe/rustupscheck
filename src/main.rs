@@ -167,6 +167,14 @@ impl Rust {
     pub fn print_info(&self) {
         println!("{}", &self.toolchain.info());
     }
+
+    fn update_info(&self) -> Option<Vec<Component>> {
+        if self.missing_components().is_empty() {
+            Some(self.toolchain.components.iter().filter(|c| c.version != self.manifest.clone().unwrap().get_pkg_version(&c.name).unwrap()).cloned().collect())
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for Rust {
