@@ -13,7 +13,6 @@ use std::{
     net::TcpStream,
     ops::Sub,
     path::PathBuf,
-    str::FromStr,
 };
 use toml::from_str;
 
@@ -482,10 +481,8 @@ impl PartialEq for Version {
     }
 }
 
-impl FromStr for Version {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl Version {
+    fn from_str(s: &str) -> Result<Self, String> {
         let split: Vec<&str> = s
             .split_whitespace()
             .map(|w| w.trim_matches(|c| c == '(' || c == ')'))

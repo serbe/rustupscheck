@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn version() {
+    assert!(Version::from_str("rls-preview 1.31 (ae0d89a08 2019-01-13)").is_err());
+    assert!(Version::from_str("1.31.21 (ae0d89a08 2019-01-13)").is_ok());
+    let ver1 = Version::from_str("1.31.6 (ae0d89a08 2019-01-13)");
+    let ver2 = Version::from_str("1.31.5 (ae0d89a08 2019-01-13)");
+    let ver3 = Version::from_str("1.31.6 (ae0d89a08 2019-01-12)");
+    let ver4 = Version::from_str("1.31.6 (000000000 2019-01-13)");
+    assert!(ver1 > ver2);
+    assert!(ver1 > ver3);
+    assert!(ver1 == ver4);
+}
+
+#[test]
 fn printvec() {
     let test_vec = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     assert_eq!(print_vec(&test_vec, ""), "abc");
