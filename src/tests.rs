@@ -1,6 +1,13 @@
 use super::*;
 
 #[test]
+fn component() {
+    let comp = Component{name: String::from("test"), required: false, version: Version::from_str("1.31.6 (ae0d89a08 2019-01-12)").unwrap()};
+    let update = comp.update_string(Version::from_str("1.31.6 (000000000 2019-01-13)").ok());
+    assert_eq!(update, Some("test - from 1.31.6 (ae0d89a08 2019-01-12) to 1.31.6 (000000000 2019-01-13)".to_string()))
+}
+
+#[test]
 fn version() {
     assert!(Version::from_str("rls-preview 1.31 (ae0d89a08 2019-01-13)").is_err());
     assert!(Version::from_str("1.31.21 (ae0d89a08 2019-01-13)").is_ok());

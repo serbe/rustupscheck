@@ -42,14 +42,22 @@ impl Component {
         }
     }
 
-    fn to_string(&self) -> String {
-        format!(
-            "{} {} ({} {})",
-            self.name,
-            self.version.version,
-            self.version.commit.hash,
-            self.version.commit.date.format("%Y-%m-%d").to_string()
-        )
+    fn update_string(&self, other: Option<Version>) -> Option<String> {
+        match other {
+            Some(other) => {
+                if self.version < other {
+                    Some(format!(
+                        "{} - from {} to {}",
+                        self.name,
+                        self.version.to_string(),
+                        other.to_string()
+                    ))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
     }
 }
 
@@ -189,15 +197,14 @@ impl Rust {
         println!("{}", &self.toolchain.info());
     }
 
-    fn update_info(&self) -> Option<Vec<Component>> {
+    fn update_info(&self) -> Option<Vec<String>> {
         if self.missing_components().is_empty() {
             let manifest = self.manifest.clone()?;
             Some(
                 self.toolchain
                     .components
                     .iter()
-                    .filter(|c| Some(c.version.clone()) < manifest.get_pkg_version(&c.name).ok())
-                    .cloned()
+                    .filter_map(|c| c.update_string(manifest.get_pkg_version(&c.name).ok()))
                     .collect(),
             )
         } else {
@@ -502,6 +509,15 @@ impl Version {
             commit,
         })
     }
+
+    fn to_string(&self) -> String {
+        format!(
+            "{} ({} {})",
+            self.version,
+            self.commit.hash,
+            self.commit.date.format("%Y-%m-%d").to_string()
+        )
+    }
 }
 
 fn u8_from_str<'de, D>(deserializer: D) -> Result<u8, D::Error>
@@ -557,27 +573,27 @@ fn main() {
     ) {
         (0, true) => println!(
             "{}\nUse: \"rustup update\" (new version from {})",
-            v.update_info()
-                .unwrap()
-                .iter()
-                .fold(String::new(), |mut acc, c| {
-                    acc.push_str(&c.to_string());
+            v.update_info().unwrap().iter().fold(
+                String::from("Update components:\n"),
+                |mut acc, c| {
+                    acc.push_str(c);
                     acc.push('\n');
                     acc
-                }),
+                }
+            ),
             v.date_str()
         ),
         (0, false) => println!("Current version is up to date"),
         _ => println!(
             "{}\nUse: \"rustup default {}-{}\"{}",
-            v.update_info()
-                .unwrap()
-                .iter()
-                .fold(String::new(), |mut acc, c| {
-                    acc.push_str(&c.to_string());
+            v.update_info().unwrap().iter().fold(
+                String::from("Update components:\n"),
+                |mut acc, c| {
+                    acc.push_str(c);
                     acc.push('\n');
                     acc
-                }),
+                }
+            ),
             v.toolchain.channel,
             v.date_str(),
             match v.toolchain.components.len() {
