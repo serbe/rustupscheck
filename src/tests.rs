@@ -1,3 +1,6 @@
+use crate::manifest::fetch_manifest;
+use crate::manifest::get_body;
+use crate::manifest::{Channel, Commit};
 use super::*;
 
 #[test]
