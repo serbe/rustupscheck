@@ -1,11 +1,10 @@
 #[macro_use]
 extern crate serde_derive;
 
-mod manifest;
+pub mod manifest;
 
-use crate::manifest::Version;
+pub use crate::manifest::{Manifest, Version};
 use chrono::{naive::NaiveDate, Duration, Local};
-use manifest::Manifest;
 use std::{env, fs::File, io::Read, ops::Sub, path::PathBuf};
 
 #[cfg(test)]
@@ -24,7 +23,7 @@ impl Component {
             "rustc" | "cargo" => true,
             _ => false,
         };
-        match manifest.get_pkg_version(name) {
+        match manifest.pkg_version(name) {
             Ok(version) => Some(Component {
                 name: name.to_string(),
                 required,
@@ -63,9 +62,9 @@ struct Toolchain {
 
 impl Toolchain {
     fn new() -> Result<Toolchain, String> {
-        let (channel, target) = get_channel_target()?;
-        let manifest = get_manifest()?;
-        let components = get_components(&target)?
+        let (channel, target) = current_channel_target()?;
+        let manifest = local_manifest()?;
+        let components = installed_components(&target)?
             .iter()
             .filter_map(|s| Component::from(&manifest, s))
             .collect();
@@ -86,7 +85,7 @@ impl Toolchain {
     }
 
     fn info(&self) -> String {
-        match self.manifest.get_pkg_version("rustc") {
+        match self.manifest.pkg_version("rustc") {
             Ok(version) => format!(
                 "Installed: {}-{} {} ({} {})\n{}",
                 self.channel,
@@ -122,7 +121,7 @@ impl Rust {
             Ok(toolchain) => {
                 let date = Local::today().naive_local();
                 let manifest =
-                    Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &toolchain.channel);
+                    Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &toolchain.channel).ok();
                 Some(Rust {
                     offset: -1,
                     date,
@@ -139,7 +138,7 @@ impl Rust {
             Ok(toolchain) => {
                 let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
                 let offset = (Local::today().naive_local() - date).num_days() - 1;
-                let manifest = Manifest::from_date(date_str, &toolchain.channel);
+                let manifest = Manifest::from_date(date_str, &toolchain.channel).ok();
                 Some(Rust {
                     offset,
                     date,
@@ -163,7 +162,7 @@ impl Rust {
                         Some(rename) => rename.to.clone(),
                         None => c.to_string(),
                     };
-                    match manifest.get_pkg_for_target(&component, &self.toolchain.target) {
+                    match manifest.pkg_for_target(&component, &self.toolchain.target) {
                         Some(package_info) => !package_info.available,
                         None => true,
                     }
@@ -176,7 +175,7 @@ impl Rust {
 
     pub fn manifest_pkg_version(&self, name: &str) -> Option<Version> {
         match &self.manifest {
-            Some(manifest) => manifest.get_pkg_version(name).ok(),
+            Some(manifest) => manifest.pkg_version(name).ok(),
             None => None,
         }
     }
@@ -196,7 +195,7 @@ impl Rust {
                 self.toolchain
                     .components
                     .iter()
-                    .filter_map(|c| c.update_string(manifest.get_pkg_version(&c.name).ok()))
+                    .filter_map(|c| c.update_string(manifest.pkg_version(&c.name).ok()))
                     .collect(),
             )
         } else {
@@ -216,12 +215,12 @@ impl Iterator for Rust {
         self.manifest = Manifest::from_date(
             &self.date.format("%Y-%m-%d").to_string(),
             &self.toolchain.channel,
-        );
+        ).ok();
         Some(self.clone())
     }
 }
 
-fn get_channel_target() -> Result<(String, String), String> {
+fn current_channel_target() -> Result<(String, String), String> {
     let toolchain = env::var("RUSTUP_TOOLCHAIN").map_err(|e| e.to_string())?;
     let split: Vec<&str> = toolchain.splitn(2, '-').collect();
     let channel = split[0].to_string();
@@ -229,7 +228,7 @@ fn get_channel_target() -> Result<(String, String), String> {
     Ok((channel, target))
 }
 
-fn get_components(target: &str) -> Result<Vec<String>, String> {
+fn installed_components(target: &str) -> Result<Vec<String>, String> {
     let rustup_home = env::var("RUSTUP_HOME").map_err(|e| e.to_string())?;
     let toolchain = env::var("RUSTUP_TOOLCHAIN").map_err(|e| e.to_string())?;
     let mut path = PathBuf::from(rustup_home);
@@ -250,7 +249,7 @@ fn get_components(target: &str) -> Result<Vec<String>, String> {
     Ok(components)
 }
 
-fn get_manifest() -> Result<Manifest, String> {
+fn local_manifest() -> Result<Manifest, String> {
     let rustup_home = env::var("RUSTUP_HOME").map_err(|e| e.to_string())?;
     let toolchain = env::var("RUSTUP_TOOLCHAIN").map_err(|e| e.to_string())?;
     let mut path = PathBuf::from(rustup_home);
@@ -264,8 +263,7 @@ fn get_manifest() -> Result<Manifest, String> {
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .map_err(|e| e.to_string())?;
-    let manifest: Manifest = toml::from_str(&contents).map_err(|e| e.to_string())?;
-    Ok(manifest)
+    toml::from_str(&contents).map_err(|e| e.to_string())
 }
 
 fn print_vec(input: &[String], comma: &str) -> String {
@@ -292,7 +290,7 @@ fn main() {
 
     match (
         v.offset,
-        v.toolchain.manifest.get_pkg_version("rust").ok() < v.manifest_pkg_version("rust"),
+        v.toolchain.manifest.pkg_version("rust").ok() < v.manifest_pkg_version("rust"),
     ) {
         (0, true) => println!(
             "{}\nUse: \"rustup update\" (new version from {})",

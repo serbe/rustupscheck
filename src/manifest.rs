@@ -6,6 +6,7 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     net::TcpStream,
+    str::FromStr,
 };
 use toml;
 
@@ -20,12 +21,33 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn from_date(date: &str, channel: &str) -> Option<Self> {
+    pub fn from_date(date: &str, channel: &str) -> Result<Self, String> {
         let path = format!("/dist/{}/channel-rust-{}.toml", date, channel);
-        fetch_manifest(&path).ok()
+        Manifest::from_url(&path)
     }
 
-    pub fn get_pkg_for_target(&self, pkg: &str, target: &str) -> Option<PackageInfo> {
+    pub fn from_url(path: &str) -> Result<Manifest, String> {
+        let connector = TlsConnector::new().map_err(|e| e.to_string())?;
+        let stream = TcpStream::connect("static.rust-lang.org:443").map_err(|e| e.to_string())?;
+        let mut stream = connector
+            .connect("static.rust-lang.org", stream)
+            .map_err(|e| e.to_string())?;
+        let request = format!(
+            "GET {} HTTP/1.0\r\nHost: static.rust-lang.org\r\n\r\n",
+            path
+        )
+        .into_bytes();
+        stream.write_all(&request).map_err(|e| e.to_string())?;
+        let mut response = vec![];
+        stream
+            .read_to_end(&mut response)
+            .map_err(|e| e.to_string())?;
+        let body = body(&response)?;
+        let manifest = toml::from_str(&body).map_err(|e| e.to_string())?;
+        Ok(manifest)
+    }
+
+    pub fn pkg_for_target(&self, pkg: &str, target: &str) -> Option<PackageInfo> {
         match self.pkg.get(pkg) {
             Some(package_target) => match package_target.target.get(target) {
                 Some(package_info) => Some(package_info.clone()),
@@ -38,51 +60,13 @@ impl Manifest {
         }
     }
 
-    pub fn get_pkg_version(&self, name: &str) -> Result<Version, String> {
+    pub fn pkg_version(&self, name: &str) -> Result<Version, String> {
         let pkg = self
             .pkg
             .get(name)
             .ok_or_else(|| format!("Manifest not contain pkg {}", name))?;
-        Version::from_str(&pkg.version)
+        Ok(pkg.version.clone())
     }
-}
-
-fn u8_from_str<'de, D>(deserializer: D) -> Result<u8, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: &str = Deserialize::deserialize(deserializer)?;
-    u8::from_str_radix(s, 10).map_err(D::Error::custom)
-}
-
-pub fn fetch_manifest(path: &str) -> Result<Manifest, String> {
-    let connector = TlsConnector::new().map_err(|e| e.to_string())?;
-    let stream = TcpStream::connect("static.rust-lang.org:443").map_err(|e| e.to_string())?;
-    let mut stream = connector
-        .connect("static.rust-lang.org", stream)
-        .map_err(|e| e.to_string())?;
-    let request = format!(
-        "GET {} HTTP/1.0\r\nHost: static.rust-lang.org\r\n\r\n",
-        path
-    )
-    .into_bytes();
-    stream.write_all(&request).map_err(|e| e.to_string())?;
-    let mut response = vec![];
-    stream
-        .read_to_end(&mut response)
-        .map_err(|e| e.to_string())?;
-    let body = get_body(&response)?;
-    let manifest = toml::from_str(&body).map_err(|e| e.to_string())?;
-    Ok(manifest)
-}
-
-pub fn get_body(response: &[u8]) -> Result<&str, String> {
-    let pos = response
-        .windows(4)
-        .position(|x| x == b"\r\n\r\n")
-        .ok_or("Not search pattern")?;
-    let body = &response[pos + 4..response.len()];
-    std::str::from_utf8(&body).map_err(|e| e.to_string())
 }
 
 impl PartialEq for Manifest {
@@ -96,7 +80,8 @@ impl PartialEq for Manifest {
 
 #[derive(Clone, Debug, Deserialize, Eq)]
 pub struct PackageTargets {
-    pub version: String,
+    #[serde(deserialize_with = "version_from_str")]
+    pub version: Version,
     pub target: HashMap<String, PackageInfo>,
 }
 
@@ -144,20 +129,24 @@ pub enum Channel {
 }
 
 impl Channel {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "stable" | "" => Some(Channel::Stable),
-            "beta" => Some(Channel::Beta),
-            "nightly" => Some(Channel::Nightly),
-            _ => None,
-        }
-    }
-
     fn to_u8(&self) -> u8 {
         match self {
             Channel::Stable => 0,
             Channel::Beta => 1,
             Channel::Nightly => 2,
+        }
+    }
+}
+
+impl FromStr for Channel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stable" | "" => Ok(Channel::Stable),
+            "beta" => Ok(Channel::Beta),
+            "nightly" => Ok(Channel::Nightly),
+            _ => Err(String::from("wrong channel")),
         }
     }
 }
@@ -180,11 +169,17 @@ pub struct Commit {
     pub date: NaiveDate,
 }
 
-impl Commit {
-    pub fn from(input: (&str, &str)) -> Result<Self, String> {
+impl FromStr for Commit {
+    type Err = String;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let split: Vec<&str> = input
+            .trim_matches(|c| c == '(' || c == ')')
+            .splitn(2, ' ')
+            .collect();
         Ok(Commit {
-            hash: input.0.to_string(),
-            date: NaiveDate::parse_from_str(input.1, "%Y-%m-%d").map_err(|e| e.to_string())?,
+            hash: split[0].to_string(),
+            date: NaiveDate::parse_from_str(split[1], "%Y-%m-%d").map_err(|e| e.to_string())?,
         })
     }
 }
@@ -247,27 +242,6 @@ impl PartialEq for Version {
 }
 
 impl Version {
-    pub fn from_str(s: &str) -> Result<Self, String> {
-        let split: Vec<&str> = s
-            .split_whitespace()
-            .map(|w| w.trim_matches(|c| c == '(' || c == ')'))
-            .collect();
-        let (raw_version, hash, date) = (split[0], split[1], split[2]);
-        let split: Vec<&str> = raw_version.split('-').collect();
-        let (version, channel) = if split.len() == 2 {
-            (split[0].to_string(), split[1])
-        } else {
-            (split[0].to_string(), "")
-        };
-        let commit = Commit::from((hash, date))?;
-        let channel = Channel::from_str(channel).ok_or_else(|| "Wrong channel".to_string())?;
-        Ok(Version {
-            channel,
-            version,
-            commit,
-        })
-    }
-
     pub fn to_string(&self) -> String {
         format!(
             "{} ({} {})",
@@ -276,4 +250,51 @@ impl Version {
             self.commit.date.format("%Y-%m-%d").to_string()
         )
     }
+}
+
+impl FromStr for Version {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let split: Vec<&str> = s.splitn(2, ' ').collect();
+        let (raw_version, commit) = (split[0], split[1]);
+        let split: Vec<&str> = raw_version.split('-').collect();
+        let (version, channel) = if split.len() == 2 {
+            (split[0].to_string(), split[1])
+        } else {
+            (split[0].to_string(), "")
+        };
+        let commit = commit.parse()?;
+        let channel = channel.parse()?;
+        Ok(Version {
+            channel,
+            version,
+            commit,
+        })
+    }
+}
+
+fn u8_from_str<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &str = Deserialize::deserialize(deserializer)?;
+    u8::from_str_radix(s, 10).map_err(D::Error::custom)
+}
+
+fn version_from_str<'de, D>(deserializer: D) -> Result<Version, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &str = Deserialize::deserialize(deserializer)?;
+    s.parse().map_err(D::Error::custom)
+}
+
+pub fn body(response: &[u8]) -> Result<&str, String> {
+    let pos = response
+        .windows(4)
+        .position(|x| x == b"\r\n\r\n")
+        .ok_or("Not search pattern")?;
+    let body = &response[pos + 4..response.len()];
+    std::str::from_utf8(&body).map_err(|e| e.to_string())
 }

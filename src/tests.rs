@@ -1,17 +1,26 @@
-use crate::manifest::fetch_manifest;
-use crate::manifest::get_body;
-use crate::manifest::{Channel, Commit};
 use super::*;
+use crate::manifest::*;
+use std::str::FromStr;
 
 #[test]
-fn component() {
-    let comp = Component{name: String::from("test"), required: false, version: Version::from_str("1.31.6 (ae0d89a08 2019-01-12)").unwrap()};
+fn test_component() {
+    let comp = Component {
+        name: String::from("test"),
+        required: false,
+        version: Version::from_str("1.31.6 (ae0d89a08 2019-01-12)").unwrap(),
+    };
     let update = comp.update_string(Version::from_str("1.31.6 (000000000 2019-01-13)").ok());
-    assert_eq!(update, Some("test - from 1.31.6 (ae0d89a08 2019-01-12) to 1.31.6 (000000000 2019-01-13)".to_string()))
+    assert_eq!(
+        update,
+        Some(
+            "test - from 1.31.6 (ae0d89a08 2019-01-12) to 1.31.6 (000000000 2019-01-13)"
+                .to_string()
+        )
+    )
 }
 
 #[test]
-fn version() {
+fn test_version() {
     assert!(Version::from_str("rls-preview 1.31 (ae0d89a08 2019-01-13)").is_err());
     assert!(Version::from_str("1.31.21 (ae0d89a08 2019-01-13)").is_ok());
     let ver1 = Version::from_str("1.31.6 (ae0d89a08 2019-01-13)");
@@ -24,7 +33,7 @@ fn version() {
 }
 
 #[test]
-fn printvec() {
+fn test_printvec() {
     let test_vec = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     assert_eq!(print_vec(&test_vec, ""), "abc");
     assert_eq!(print_vec(&test_vec, ","), "a,b,c");
@@ -32,7 +41,7 @@ fn printvec() {
 }
 
 #[test]
-fn channel() {
+fn test_channel() {
     assert!(Channel::Beta > Channel::Stable);
     assert!(Channel::Nightly > Channel::Beta);
     assert!(Channel::Stable == Channel::Stable);
@@ -40,11 +49,11 @@ fn channel() {
 }
 
 #[test]
-fn commit() {
-    let c1 = Commit::from(("12fa34b", "2018-31-12"));
-    let c2 = Commit::from(("12fa34b", "2018-12-31"));
-    let c3 = Commit::from(("12fa34a", "2018-12-31"));
-    let c4 = Commit::from(("12fa34b", "2019-01-01"));
+fn test_commit() {
+    let c1 = Commit::from_str("12fa34b 2018-31-12");
+    let c2 = Commit::from_str("(12fa34b 2018-12-31)");
+    let c3 = Commit::from_str("12fa34a 2018-12-31");
+    let c4 = Commit::from_str("12fa34b 2019-01-01");
     assert!(c1.is_err());
     assert!(c2.is_ok());
     assert!(c2 == c3);
@@ -52,30 +61,30 @@ fn commit() {
 }
 
 #[test]
-fn body() {
+fn test_body() {
     let response = b"HTTP/2.0 200 OK\r\nx-amz-bucket-region: us-west-1\r\nserver: AmazonS3\r\nx-cache: Miss from cloudfront\r\n\r\ntest message";
-    assert_eq!(get_body(response), Ok("test message"));
+    assert_eq!(body(response), Ok("test message"));
     let response = b"\r\n\r\ntest message";
-    assert_eq!(get_body(response), Ok("test message"));
+    assert_eq!(body(response), Ok("test message"));
     let response = b"\r\n\r\ntest message\r\n\r\ntest message";
-    assert_eq!(get_body(response), Ok("test message\r\n\r\ntest message"));
+    assert_eq!(body(response), Ok("test message\r\n\r\ntest message"));
 }
 
 #[test]
-fn wrong_path() {
+fn test_wrong_path() {
     let path = "/dist/01-01-2019/channel-rust-nightly.toml";
-    let manifest = fetch_manifest(path);
+    let manifest = Manifest::from_url(path);
     assert!(manifest.is_err());
     let path = "static.rust-lang.org";
-    let manifest = fetch_manifest(path);
+    let manifest = Manifest::from_url(path);
     assert!(manifest.is_err());
 }
 
 #[test]
-fn new_year_manifest() {
+fn test_new_year_manifest() {
     let manifest_from_date = Manifest::from_date("2019-01-01", "nightly");
     let path = "/dist/2019-01-01/channel-rust-nightly.toml";
-    let optional_manifest = fetch_manifest(path);
+    let optional_manifest = Manifest::from_url(path);
     assert!(optional_manifest.is_ok());
     let manifest = optional_manifest.unwrap();
     assert_eq!(manifest_from_date.unwrap(), manifest);
@@ -96,7 +105,7 @@ fn new_year_manifest() {
             date: NaiveDate::parse_from_str(&"2018-12-31", "%Y-%m-%d").unwrap(),
         },
     };
-    assert_eq!(manifest.get_pkg_version("rust"), Ok(rust1330));
+    assert_eq!(manifest.pkg_version("rust"), Ok(rust1330));
     let rust_src = manifest.pkg.get("rust-src").unwrap();
     let target_info = rust_src.target.get("x86_64-pc-windows-gnu");
     assert!(target_info.is_none());
@@ -106,7 +115,7 @@ fn new_year_manifest() {
     assert_eq!(target_info.available, true);
     assert_eq!(
         manifest
-            .get_pkg_for_target("rust-src", "x86_64-pc-windows-gnu")
+            .pkg_for_target("rust-src", "x86_64-pc-windows-gnu")
             .unwrap()
             .available,
         true
@@ -114,15 +123,11 @@ fn new_year_manifest() {
 }
 
 #[test]
-fn parse_version() {
-    let s = "rustc 1.33.0-nightly (9eac38634 2018-12-31)";
-    let s = s.replace("rustc ", "");
-    let split: Vec<&str> = s
-        .split_whitespace()
-        .map(|w| w.trim_matches(|c| c == '(' || c == ')'))
-        .collect();
-    assert_eq!(split.len(), 3);
-    let (raw_version, hash, date) = (split[0], split[1], split[2]);
+fn test_parse_version() {
+    let s = "1.33.0-nightly (9eac38634 2018-12-31)";
+    let split: Vec<&str> = s.splitn(2, ' ').collect();
+    assert_eq!(split.len(), 2);
+    let (raw_version, commit) = (split[0], split[1]);
     assert_eq!(raw_version, "1.33.0-nightly");
     let split: Vec<&str> = raw_version.split('-').collect();
     let (version, channel) = if split.len() == 2 {
@@ -132,9 +137,8 @@ fn parse_version() {
     };
     assert_eq!(version, "1.33.0");
     assert_eq!(channel, "nightly");
-    assert_eq!(hash, "9eac38634");
-    assert_eq!(date, "2018-12-31");
-    let commit = Commit::from((&hash, &date)).unwrap();
+    assert_eq!(commit, "(9eac38634 2018-12-31)");
+    let commit = Commit::from_str(&commit).unwrap();
     assert_eq!(
         commit,
         Commit {
@@ -156,7 +160,7 @@ fn parse_version() {
 }
 
 #[test]
-fn parse_active_toolchain() {
+fn test_parse_active_toolchain() {
     let output = "nightly-x86_64-pc-windows-gnu\n";
     let split: Vec<&str> = output.trim().splitn(2, '-').collect();
     let channel = split[0];
