@@ -65,7 +65,7 @@ impl Manifest {
             .pkg
             .get(name)
             .ok_or_else(|| format!("Manifest not contain pkg {}", name))?;
-        Ok(pkg.version.clone())
+        pkg.version.parse()
     }
 }
 
@@ -80,8 +80,7 @@ impl PartialEq for Manifest {
 
 #[derive(Clone, Debug, Deserialize, Eq)]
 pub struct PackageTargets {
-    #[serde(deserialize_with = "version_from_str")]
-    pub version: Version,
+    pub version: String,
     pub target: HashMap<String, PackageInfo>,
 }
 
@@ -280,14 +279,6 @@ where
 {
     let s: &str = Deserialize::deserialize(deserializer)?;
     u8::from_str_radix(s, 10).map_err(D::Error::custom)
-}
-
-fn version_from_str<'de, D>(deserializer: D) -> Result<Version, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: &str = Deserialize::deserialize(deserializer)?;
-    s.parse().map_err(D::Error::custom)
 }
 
 pub fn body(response: &[u8]) -> Result<&str, String> {
