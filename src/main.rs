@@ -14,40 +14,37 @@ mod tests;
 struct Component {
     name: String,
     required: bool,
-    version: Version,
+    version: Option<Version>,
 }
 
 impl Component {
-    fn from(manifest: &Manifest, name: &str) -> Option<Self> {
+    fn from(manifest: &Manifest, name: &str) -> Self {
         let required = match name {
             "rustc" | "cargo" => true,
             _ => false,
         };
-        match manifest.pkg_version(name) {
-            Ok(version) => Some(Component {
-                name: name.to_string(),
-                required,
-                version,
-            }),
-            Err(_) => None,
+        Component {
+            name: name.to_string(),
+            required,
+            version: manifest.pkg_version(name),
         }
     }
 
     fn update_string(&self, other: Option<Version>) -> Option<String> {
-        match other {
-            Some(other) => {
-                if self.version < other {
+        match (&self.version, &other) {
+            (Some(version), Some(other)) => {
+                if version < other {
                     Some(format!(
                         "{} - from {} to {}",
                         self.name,
-                        self.version.to_string(),
+                        version.to_string(),
                         other.to_string()
                     ))
                 } else {
                     None
                 }
             }
-            None => None,
+            _ => None,
         }
     }
 }
@@ -66,7 +63,7 @@ impl Toolchain {
         let manifest = local_manifest()?;
         let components = installed_components(&target)?
             .iter()
-            .filter_map(|s| Component::from(&manifest, s))
+            .map(|s| Component::from(&manifest, s))
             .collect();
         Ok(Toolchain {
             channel,
@@ -86,7 +83,7 @@ impl Toolchain {
 
     fn info(&self) -> String {
         match self.manifest.pkg_version("rustc") {
-            Ok(version) => format!(
+            Some(version) => format!(
                 "Installed: {}-{} {} ({} {})\n{}",
                 self.channel,
                 self.target,
@@ -102,7 +99,7 @@ impl Toolchain {
                     ),
                 }
             ),
-            Err(_) => String::from("Not found installed rustc"),
+            None => String::from("Not found installed rustc"),
         }
     }
 }
@@ -121,7 +118,8 @@ impl Rust {
             Ok(toolchain) => {
                 let date = Local::today().naive_local();
                 let manifest =
-                    Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &toolchain.channel).ok();
+                    Manifest::from_date(&date.format("%Y-%m-%d").to_string(), &toolchain.channel)
+                        .ok();
                 Some(Rust {
                     offset: -1,
                     date,
@@ -175,7 +173,7 @@ impl Rust {
 
     pub fn manifest_pkg_version(&self, name: &str) -> Option<Version> {
         match &self.manifest {
-            Some(manifest) => manifest.pkg_version(name).ok(),
+            Some(manifest) => manifest.pkg_version(name),
             None => None,
         }
     }
@@ -195,7 +193,7 @@ impl Rust {
                 self.toolchain
                     .components
                     .iter()
-                    .filter_map(|c| c.update_string(manifest.pkg_version(&c.name).ok()))
+                    .filter_map(|c| c.update_string(manifest.pkg_version(&c.name)))
                     .collect(),
             )
         } else {
@@ -215,7 +213,8 @@ impl Iterator for Rust {
         self.manifest = Manifest::from_date(
             &self.date.format("%Y-%m-%d").to_string(),
             &self.toolchain.channel,
-        ).ok();
+        )
+        .ok();
         Some(self.clone())
     }
 }
@@ -290,7 +289,7 @@ fn main() {
 
     match (
         v.offset,
-        v.toolchain.manifest.pkg_version("rust").ok() < v.manifest_pkg_version("rust"),
+        v.toolchain.manifest.pkg_version("rust") < v.manifest_pkg_version("rust"),
     ) {
         (0, true) => println!(
             "{}\nUse: \"rustup update\" (new version from {})",

@@ -7,7 +7,7 @@ fn test_component() {
     let comp = Component {
         name: String::from("test"),
         required: false,
-        version: Version::from_str("1.31.6 (ae0d89a08 2019-01-12)").unwrap(),
+        version: Version::from_str("1.31.6 (ae0d89a08 2019-01-12)").ok(),
     };
     let update = comp.update_string(Version::from_str("1.31.6 (000000000 2019-01-13)").ok());
     assert_eq!(
@@ -61,16 +61,6 @@ fn test_commit() {
 }
 
 #[test]
-fn test_body() {
-    let response = b"HTTP/2.0 200 OK\r\nx-amz-bucket-region: us-west-1\r\nserver: AmazonS3\r\nx-cache: Miss from cloudfront\r\n\r\ntest message";
-    assert_eq!(body(response), Ok("test message"));
-    let response = b"\r\n\r\ntest message";
-    assert_eq!(body(response), Ok("test message"));
-    let response = b"\r\n\r\ntest message\r\n\r\ntest message";
-    assert_eq!(body(response), Ok("test message\r\n\r\ntest message"));
-}
-
-#[test]
 fn test_wrong_path() {
     let path = "/dist/01-01-2019/channel-rust-nightly.toml";
     let manifest = Manifest::from_url(path);
@@ -105,7 +95,7 @@ fn test_new_year_manifest() {
             date: NaiveDate::parse_from_str(&"2018-12-31", "%Y-%m-%d").unwrap(),
         },
     };
-    assert_eq!(manifest.pkg_version("rust"), Ok(rust1330));
+    assert_eq!(manifest.pkg_version("rust"), Some(rust1330));
     let rust_src = manifest.pkg.get("rust-src").unwrap();
     let target_info = rust_src.target.get("x86_64-pc-windows-gnu");
     assert!(target_info.is_none());

@@ -60,12 +60,11 @@ impl Manifest {
         }
     }
 
-    pub fn pkg_version(&self, name: &str) -> Result<Version, String> {
+    pub fn pkg_version(&self, name: &str) -> Option<Version> {
         let pkg = self
             .pkg
-            .get(name)
-            .ok_or_else(|| format!("Manifest not contain pkg {}", name))?;
-        pkg.version.parse()
+            .get(name)?;
+        pkg.version.clone()
     }
 }
 
@@ -80,7 +79,8 @@ impl PartialEq for Manifest {
 
 #[derive(Clone, Debug, Deserialize, Eq)]
 pub struct PackageTargets {
-    pub version: String,
+    #[serde(deserialize_with = "version_from_str")]
+    pub version: Option<Version>,
     pub target: HashMap<String, PackageInfo>,
 }
 
@@ -281,11 +281,33 @@ where
     u8::from_str_radix(s, 10).map_err(D::Error::custom)
 }
 
-pub fn body(response: &[u8]) -> Result<&str, String> {
+fn version_from_str<'de, D>(deserializer: D) -> Result<Option<Version>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &str = Deserialize::deserialize(deserializer)?;
+    Ok(if s.is_empty() {
+        None
+    } else {
+        Some(s.parse().map_err(D::Error::custom)?)
+    })
+}
+
+fn body(response: &[u8]) -> Result<&str, String> {
     let pos = response
         .windows(4)
         .position(|x| x == b"\r\n\r\n")
         .ok_or("Not search pattern")?;
     let body = &response[pos + 4..response.len()];
     std::str::from_utf8(&body).map_err(|e| e.to_string())
+}
+
+#[test]
+fn test_body() {
+    let response = b"HTTP/2.0 200 OK\r\nx-amz-bucket-region: us-west-1\r\nserver: AmazonS3\r\nx-cache: Miss from cloudfront\r\n\r\ntest message";
+    assert_eq!(body(response), Ok("test message"));
+    let response = b"\r\n\r\ntest message";
+    assert_eq!(body(response), Ok("test message"));
+    let response = b"\r\n\r\ntest message\r\n\r\ntest message";
+    assert_eq!(body(response), Ok("test message\r\n\r\ntest message"));
 }
