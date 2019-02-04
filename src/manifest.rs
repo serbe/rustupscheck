@@ -4,6 +4,7 @@ use serde::{de::Error, Deserialize, Deserializer};
 use std::{
     cmp::Ordering,
     collections::HashMap,
+    fmt,
     io::{Read, Write},
     net::TcpStream,
     str::FromStr,
@@ -61,9 +62,7 @@ impl Manifest {
     }
 
     pub fn pkg_version(&self, name: &str) -> Option<Version> {
-        let pkg = self
-            .pkg
-            .get(name)?;
+        let pkg = self.pkg.get(name)?;
         pkg.version.clone()
     }
 }
@@ -240,9 +239,10 @@ impl PartialEq for Version {
     }
 }
 
-impl Version {
-    pub fn to_string(&self) -> String {
-        format!(
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
             "{} ({} {})",
             self.version,
             self.commit.hash,

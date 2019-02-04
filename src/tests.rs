@@ -9,7 +9,7 @@ fn test_component() {
         required: false,
         version: Version::from_str("1.31.6 (ae0d89a08 2019-01-12)").ok(),
     };
-    let update = comp.update_string(Version::from_str("1.31.6 (000000000 2019-01-13)").ok());
+    let update = comp.update_info(Version::from_str("1.31.6 (000000000 2019-01-13)").ok());
     assert_eq!(
         update,
         Some(
@@ -30,6 +30,7 @@ fn test_version() {
     assert!(ver1 > ver2);
     assert!(ver1 > ver3);
     assert!(ver1 == ver4);
+    assert!(ver3 > ver2);
 }
 
 #[test]

@@ -30,7 +30,7 @@ impl Component {
         }
     }
 
-    fn update_string(&self, other: Option<Version>) -> Option<String> {
+    fn update_info(&self, other: Option<Version>) -> Option<String> {
         match (&self.version, &other) {
             (Some(version), Some(other)) => {
                 if version < other {
@@ -193,7 +193,7 @@ impl Rust {
                 self.toolchain
                     .components
                     .iter()
-                    .filter_map(|c| c.update_string(manifest.pkg_version(&c.name)))
+                    .filter_map(|c| c.update_info(manifest.pkg_version(&c.name)))
                     .collect(),
             )
         } else {
