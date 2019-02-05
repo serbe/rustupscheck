@@ -30,7 +30,7 @@ impl Component {
         }
     }
 
-    fn update_info(&self, other: Option<Version>) -> Option<String> {
+    pub fn update_info(&self, other: Option<Version>) -> Option<String> {
         match (&self.version, &other) {
             (Some(version), Some(other)) => {
                 if version < other {
